@@ -38,8 +38,9 @@ stemn update --check    # nur pruefen
 stemn update --auto off # automatische Updates aus
 ```
 
-Neue Version veroeffentlichen: `__version__` ist egal, einfach einen Tag pushen, z.B. `git tag v0.2.0 && git push --tags`.
-Der Build erstellt dann das Release mit den Paketen.
+Neue Version veroeffentlichen: auf GitHub unter *Actions → Build → Run workflow* eine hoehere
+Versionsnummer eintragen (z.B. `0.2.0`) oder einen Tag `v0.2.0` pushen. Der Build erstellt dann das
+Release mit den Paketen, und alle installierten stemn holen es sich beim naechsten Start.
 
 Weil das Repo privat ist, braucht stemn einen GitHub-Token mit **nur Lesezugriff auf dieses Repo**.
 Er wird beim Build aus dem Repo-Secret `STEMN_UPDATE_TOKEN` ins Paket eingebaut.

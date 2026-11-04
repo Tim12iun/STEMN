@@ -1,9 +1,14 @@
 name: Build
 
 # Baut fertige Pakete fuer Mac (Apple Silicon) und Windows, inkl. Modell.
-# Manuell starten oder per Tag v* (dann auch als Release).
+# Manuell starten (optional mit Versionsnummer -> Release) oder per Tag v*.
 on:
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Versionsnummer fuer ein Release, z.B. 0.2.0 (leer = nur bauen)"
+        required: false
+        default: ""
   push:
     tags: ["v*"]
 
@@ -37,11 +42,13 @@ jobs:
         run: |
           if [ -z "$TOKEN" ]; then echo "::warning::Secret STEMN_UPDATE_TOKEN fehlt, automatische Updates sind im Paket aus"; fi
           printf 'TOKEN = "%s"\n' "$TOKEN" > src/stemn/_build_token.py
-      - name: Version aus Tag setzen
-        if: startsWith(github.ref, 'refs/tags/v')
+      - name: Version setzen
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.version != ''
         shell: bash
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
-          v="${GITHUB_REF_NAME#v}"
+          v="${INPUT_VERSION:-${GITHUB_REF_NAME#v}}"
           sed -i.bak "s/^__version__ = .*/__version__ = \"$v\"/" src/stemn/__init__.py && rm src/stemn/__init__.py.bak
       - name: PyInstaller
         run: >
@@ -78,7 +85,7 @@ jobs:
           path: ${{ matrix.name }}*.zip
 
   release:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || inputs.version != ''
     needs: build
     runs-on: ubuntu-latest
     permissions:
@@ -89,4 +96,6 @@ jobs:
           merge-multiple: true
       - uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ inputs.version != '' && format('v{0}', inputs.version) || github.ref_name }}
+          target_commitish: ${{ github.sha }}
           files: "*.zip"
