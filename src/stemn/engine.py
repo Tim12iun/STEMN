@@ -7,9 +7,11 @@ so a stem can be dropped onto the same position in a DAW and stays on the grid.
 from __future__ import annotations
 
 import logging
+import math
 import re
 import tempfile
 import threading
+import time
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -70,6 +72,7 @@ class Engine:
 
     def __init__(self) -> None:
         self._separator = None
+        self._restore_rate = 4.0  # seconds of work per second of audio; learned after each stem
         self._model_id: str | None = None
         self._restorer = None
         self._lock = threading.Lock()
@@ -115,7 +118,28 @@ class Engine:
             import librosa
 
             audio = librosa.resample(audio.T, orig_sr=sr, target_sr=restorer.sample_rate).T
-        restored = restorer.restore(audio, progress=progress)
+        # Apollo reports only after each 10 s chunk, so a short loop would sit at one value for a
+        # minute and look frozen. Tick the bar along an estimate meanwhile (never past 90 %).
+        seconds = len(audio) / restorer.sample_rate
+        expected = max(seconds * self._restore_rate, 1.0)
+        done = threading.Event()
+
+        def tick() -> None:
+            began = time.monotonic()
+            while not done.wait(0.4):
+                progress(min(0.9, 1.0 - math.exp(-(time.monotonic() - began) / expected)))
+
+        ticker = threading.Thread(target=tick, daemon=True)
+        began = time.monotonic()
+        ticker.start()
+        try:
+            restored = restorer.restore(audio, progress=lambda v: None)
+        finally:
+            done.set()
+            ticker.join()
+        if seconds > 0:
+            self._restore_rate = (time.monotonic() - began) / seconds  # better guess for the next stem
+        progress(1.0)
         target = path.with_name(path.stem + "_restored.wav")
         sf.write(str(target), restored, restorer.sample_rate, subtype="FLOAT")
         return target

@@ -1201,7 +1201,7 @@ class MainWindow(QMainWindow):
 
     def on_progress(self, value: float) -> None:
         restoring = getattr(self, "_restoring", False) and value >= 0.55
-        text = "Modell wird geladen" if value < 0.08 else "Repariere Spuren" if restoring and value < 0.95 else "Trenne Spuren" if value < 0.95 else "Spuren werden gespeichert"
+        text = "Modell wird geladen" if value < 0.08 else "Apollo repariert die Spuren (dauert etwas)" if restoring and value < 0.95 else "Trenne Spuren" if value < 0.95 else "Spuren werden gespeichert"
         self.wave.set_progress(value, text)
 
     def _cleanup_thread(self) -> None:

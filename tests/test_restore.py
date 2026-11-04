@@ -82,3 +82,31 @@ def test_bundled_restorer_manifest_is_valid():
     found = restore.discover_restorers([(restore.bundled_models_dir(), True)])
     assert "apollo-uni" in found
     assert found["apollo-uni"].model["feature_dim"] == 384
+
+
+def test_restore_progress_keeps_moving_while_apollo_works(tmp_path):
+    """A loop shorter than one chunk must not sit at one value until the stem is done."""
+    import time
+
+    import soundfile as sf
+
+    from stemn.engine import Engine
+
+    class SlowRestorer:
+        sample_rate = 44100
+
+        def restore(self, audio, progress=None):
+            time.sleep(1.5)
+            return audio
+
+    path = tmp_path / "stem_kick.wav"
+    sf.write(path, np.full((44100, 2), 0.1, np.float32), 44100)
+    engine = Engine()
+    engine._restore_rate = 1.0
+    seen = []
+    out = engine._restore_file(SlowRestorer(), path, seen.append)
+    assert out.is_file()
+    ticks = seen[:-1]
+    assert len(ticks) >= 2 and ticks == sorted(ticks) and 0 < ticks[-1] <= 0.9
+    assert seen[-1] == 1.0
+    assert 1.0 < engine._restore_rate < 3.0  # learned from this stem
