@@ -84,6 +84,8 @@ QPushButton#transport {{ min-width: 38px; max-width: 38px; padding: 6px 0; }}
 QPushButton#transport:checked {{ border: 1px solid {ACCENT}; color: {ACCENT}; }}
 QPushButton#small {{ padding: 2px 0; min-width: 26px; max-width: 26px; font-weight: 700; }}
 QPushButton#small:checked {{ border: 1px solid {ACCENT}; color: {ACCENT}; background: {RAISED}; }}
+QPushButton#toggle {{ text-align: left; padding: 5px 10px; border: 1px solid transparent; }}
+QPushButton#toggle:checked {{ border: 1px solid {ACCENT}; color: {ACCENT}; }}
 QPushButton#segment {{ border-radius: 0; padding: 5px 0; }}
 QPushButton#segment:checked {{ border: 1px solid {ACCENT}; color: {ACCENT}; }}
 QPushButton#segleft {{ border-top-left-radius: 6px; border-bottom-left-radius: 6px; }}
@@ -1063,8 +1065,8 @@ class MainWindow(QMainWindow):
         lay.addSpacing(8)
 
         # optional: regenerate missing highs/details per stem after separating
-        self.restore_btn = QPushButton("APOLLO · FEHLENDES ERGÄNZEN")
-        self.restore_btn.setObjectName("small")
+        self.restore_btn = QPushButton("Apollo · Fehlendes ergänzen")
+        self.restore_btn.setObjectName("toggle")
         self.restore_btn.setCheckable(True)
         self.restore_btn.setToolTip("Repariert jede Spur nach dem Trennen: ergänzt fehlende Höhen und Details. Dauert länger.")
         has_restorer = any(r.is_available() for r in discover_restorers().values())
