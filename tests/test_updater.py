@@ -113,3 +113,14 @@ def test_update_script_restarts_only_with_flag(tmp_path, monkeypatch):
     script = (tmp_path / "stemn-update.sh").read_text()
     assert str(updater.relaunch_flag(root)) in script and "if [ -f" in script
     assert subprocess.run(["sh", "-n", str(tmp_path / "stemn-update.sh")]).returncode == 0
+
+
+def test_windows_is_not_offered_a_mac_only_release():
+    from stemn import updater
+
+    releases = [
+        {"tag_name": "v0.4.0", "assets": [{"name": "stemn-macos-arm64-app.zip", "url": "m4"}]},
+        {"tag_name": "v0.3.6", "assets": [{"name": "stemn-windows-x64-app.zip", "url": "w3"}, {"name": "stemn-macos-arm64-app.zip", "url": "m3"}]},
+    ]
+    assert updater.pick_release(releases, "windows-x64").version == "v0.3.6"
+    assert updater.pick_release(releases, "macos-arm64").version == "v0.4.0"
