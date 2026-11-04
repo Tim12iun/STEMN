@@ -71,23 +71,7 @@ def make_server(host: str = "127.0.0.1", port: int = 47800, engine=None) -> Thre
     return ThreadingHTTPServer((host, port), make_handler(engine))
 
 
-def _auto_update() -> None:
-    """Look for a new release in the background; it is installed after exit."""
-    from . import updater
-
-    if not updater.load_config().get("auto_update", True) or updater.install_root() is None:
-        return
-    try:
-        msg = updater.run_update()
-        print(f"stemn: {msg}", file=sys.stderr, flush=True)
-    except Exception as exc:  # never break the service because of an update
-        print(f"stemn: Update-Pruefung fehlgeschlagen: {exc}", file=sys.stderr, flush=True)
-
-
 def serve(host: str = "127.0.0.1", port: int = 47800) -> None:
-    import threading
-
-    threading.Thread(target=_auto_update, daemon=True).start()
     httpd = make_server(host, port)
     print(f"stemn laeuft auf http://{host}:{port}", flush=True)
     try:

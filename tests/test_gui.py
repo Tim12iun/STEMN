@@ -163,3 +163,18 @@ def test_space_plays_from_click_and_pause_keeps_position(window):
     window.toggle_play()
     assert player.playing and player.pos == stopped
     player.close()
+
+
+def test_gear_shows_dot_when_update_is_waiting(window):
+    assert not window.gear_btn.badge
+    window._installing = False
+    window._on_update_checked("9.9.9", "")
+    assert window.gear_btn.badge and "9.9.9" in window.gear_btn.toolTip()
+    dlg = gui.SettingsDialog(window)
+    assert dlg.install_btn.isVisibleTo(dlg) and "9.9.9" in dlg.status.text()
+    window._on_update_installed("9.9.9", "")
+    assert dlg.install_btn.text() == "NEU STARTEN"
+    window._on_update_checked("", "")
+    assert not window.gear_btn.badge
+    window.update_changed.disconnect(dlg.refresh)
+    dlg.deleteLater()
