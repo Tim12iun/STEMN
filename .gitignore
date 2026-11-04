@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.venv/
+build/
+dist/
+*.egg-info/
+.pytest_cache/
+# Modell-Gewichte nicht ins Git (zu gross), werden per scripts/fetch_models.py geladen
+models/**/*.ckpt
+models/**/*.th
+models/**/*.onnx
+models/**/*.part

@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "stemn"
+version = "0.1.0"
+description = "Zerlegt Drum-Loops in Kick, Snare, Hi-Hat, Toms und Becken (lokal, offline)."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "audio-separator>=0.40",
+    "soundfile>=0.12",
+    "numpy>=1.24",
+    "pyyaml>=6",
+    "audioread>=3",  # audio-separator importiert es, librosa 1.x bringt es nicht mehr mit
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+stemn = "stemn.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

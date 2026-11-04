@@ -1,0 +1,71 @@
+name: Build
+
+# Baut fertige Pakete fuer Mac (Apple Silicon) und Windows, inkl. Modell.
+# Manuell starten oder per Tag v* (dann auch als Release).
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            name: stemn-macos-arm64
+          - os: windows-latest
+            name: stemn-windows-x64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -e . pyinstaller
+      - uses: actions/cache@v4
+        with:
+          path: models/**/*.ckpt
+          key: models-${{ hashFiles('models/*/stemn-model.yaml') }}
+      - run: python scripts/fetch_models.py
+      - name: PyInstaller
+        run: >
+          pyinstaller --noconfirm --clean --name stemn
+          --collect-all audio_separator
+          --collect-data librosa
+          --copy-metadata audio-separator
+          --add-data "models${{ runner.os == 'Windows' && ';' || ':' }}models"
+          src/stemn/__main__.py
+      - name: Smoke-Test
+        shell: bash
+        run: |
+          ./dist/stemn/stemn --version
+          ./dist/stemn/stemn models list
+          python -c "import numpy as np, soundfile as sf; sf.write('smoke.wav', np.zeros((44100,2),'float32'), 44100)"
+          ./dist/stemn/stemn separate smoke.wav -s kick -o smoke-out
+          ls smoke-out
+      - name: Packen
+        shell: bash
+        run: |
+          cd dist
+          if [ "$RUNNER_OS" = "Windows" ]; then 7z a ../${{ matrix.name }}.zip stemn; else zip -qry ../${{ matrix.name }}.zip stemn; fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: ${{ matrix.name }}.zip
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: "*.zip"

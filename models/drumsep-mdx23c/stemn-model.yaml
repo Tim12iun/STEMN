@@ -1,0 +1,14 @@
+id: drumsep-mdx23c
+name: MDX23C DrumSep (aufr33 & jarredou)
+arch: mdxc
+checkpoint: MDX23C-DrumSep-aufr33-jarredou.ckpt
+config: config_drumsep_mdx23c.yaml
+# Die Modelldateien liegen nicht im Git-Repo (437 MB). scripts/fetch_models.py
+# laedt sie (Build und Entwicklung) und prueft die Pruefsummen.
+downloads:
+  - file: MDX23C-DrumSep-aufr33-jarredou.ckpt
+    url: https://github.com/nomadkaraoke/python-audio-separator/releases/download/model-configs/MDX23C-DrumSep-aufr33-jarredou.ckpt
+    sha256: d2a4aa53eb584d21eead358a4e66d1882ad182911be018f052b5da73be9096d0
+  - file: config_drumsep_mdx23c.yaml
+    url: https://github.com/nomadkaraoke/python-audio-separator/releases/download/model-configs/config_drumsep_mdx23c.yaml
+    sha256: 17d1649a227f841165bdb4c11a42082898192a1ea3ceab7e7e0b9293d6589dd6

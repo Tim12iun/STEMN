@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-14, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: CPU-Torch (Linux, spart den CUDA-Download)
+        if: runner.os == 'Linux'
+        run: pip install torch --index-url https://download.pytorch.org/whl/cpu
+      - run: pip install -e ".[dev]"
+      - run: pytest -q
+
+  model-test:
+    # Ein Durchlauf mit dem echten Modell (Linux reicht, das Modell ist plattformunabhaengig)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install torch --index-url https://download.pytorch.org/whl/cpu
+      - run: pip install -e ".[dev]"
+      - uses: actions/cache@v4
+        with:
+          path: models/**/*.ckpt
+          key: models-${{ hashFiles('models/*/stemn-model.yaml') }}
+      - run: python scripts/fetch_models.py
+      - run: pytest -q tests/test_engine_model.py
