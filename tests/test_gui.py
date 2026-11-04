@@ -65,7 +65,7 @@ def test_export_mix_writes_summed_file(window):
     window.rows[0].mute.setChecked(True)
     path = window.export_mix()
     audio, _ = sf.read(str(path))
-    assert path.name == "loop - snare+hihat.wav"
+    assert path.name == "loop - mix snare+hihat.wav"
     assert np.allclose(audio, 0.5, atol=1e-3)
 
 
@@ -84,3 +84,24 @@ def test_replacing_loop_rebuilds_rows(window, app):
         gc.collect()
         window.on_done(stems)
     assert len(window.rows) == 3
+
+
+def test_gain_fader_scales_playback_and_mix(window):
+    window.rows[1].mute.setChecked(True)
+    window.rows[2].mute.setChecked(True)
+    window.rows[0].fader.setValue(-60)  # kick -6 dB
+    assert window.rows[0].db.text() == "-6.0 dB"
+    out = np.zeros((64, 2), dtype=np.float32)
+    window.player._callback(out, 64, None, None)
+    assert np.allclose(out, 0.1 * 10 ** (-6 / 20), atol=1e-3)
+    path = window.export_mix()  # single stem but not at 0 dB -> rendered file
+    assert path != window.stems["kick"]
+    assert path.name == "loop - mix kick-6.0dB.wav"
+    kick, _ = sf.read(str(window.stems["kick"]))
+    assert np.allclose(kick, 0.1, atol=1e-3)  # original stem untouched
+
+
+def test_fader_minimum_is_silent(window):
+    window.rows[0].fader.setValue(window.rows[0].fader.minimum())
+    assert window.current_gains()["kick"] == 0.0
+    assert "kick" not in window.wave.active
