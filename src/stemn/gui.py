@@ -218,6 +218,55 @@ class Player:
 # --------------------------------------------------------------------------- worker
 
 
+def separate_command(path: Path, model_id: str | None, quality: str, result_file: Path) -> list[str]:
+    """Command line that runs one separation in its own process.
+
+    A crash deep inside torch (native abort) then only ends that process,
+    and the window can report it instead of closing.
+    """
+    if getattr(sys, "frozen", False):
+        cmd = [sys.executable, "separate"]
+    else:
+        cmd = [sys.executable, "-m", "stemn.cli", "separate"]
+    cmd += [str(path), "-q", quality, "--result-file", str(result_file)]
+    if model_id:
+        cmd += ["-m", model_id]
+    return cmd
+
+
+def run_separation(path: Path, model_id: str | None, quality: str) -> dict:
+    """Run the separation in a child process. Returns {stem: path} or raises RuntimeError."""
+    import json
+    import subprocess
+    import tempfile
+
+    with tempfile.TemporaryDirectory(prefix="stemn-") as tmp:
+        result_file = Path(tmp) / "result.json"
+        kwargs = {}
+        if sys.platform == "win32":
+            kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        proc = subprocess.run(
+            separate_command(path, model_id, quality, result_file),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            **kwargs,
+        )
+        data = {}
+        if result_file.is_file():
+            try:
+                data = json.loads(result_file.read_text(encoding="utf-8"))
+            except ValueError:
+                data = {}
+    if "error" in data:
+        raise RuntimeError(data["error"])
+    if proc.returncode == 0 and "stems" in data:
+        return next(iter(data["stems"].values()), {})
+    tail = (proc.stderr or b"").decode("utf-8", "replace").strip().splitlines()[-3:]
+    detail = ("\n" + "\n".join(tail)) if tail else ""
+    raise RuntimeError(f"Die Trennung ist abgestuerzt (Code {proc.returncode}).{detail}")
+
+
 class SeparateWorker(QObject):
     finished = Signal(dict)
     failed = Signal(str)
@@ -228,10 +277,7 @@ class SeparateWorker(QObject):
 
     def run(self) -> None:
         try:
-            from .engine import default_engine
-
-            out = default_engine().separate(self.path, model_id=self.model_id, quality=self.quality)
-            self.finished.emit(out)
+            self.finished.emit(run_separation(self.path, self.model_id, self.quality))
         except Exception as exc:
             self.failed.emit(str(exc))
 

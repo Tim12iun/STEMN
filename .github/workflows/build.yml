@@ -61,6 +61,14 @@ jobs:
           --add-data "models${{ runner.os == 'Windows' && ';' || ':' }}models"
           --add-data "src/stemn/fonts${{ runner.os == 'Windows' && ';' || ':' }}stemn/fonts"
           scripts/stemn_entry.py
+      - name: Mac-App Version eintragen und neu signieren
+        if: runner.os == 'macOS'
+        run: |
+          v=$(python -c "import re;print(re.search(r'__version__ = \"(.+)\"', open('src/stemn/__init__.py').read()).group(1))")
+          plutil -replace CFBundleShortVersionString -string "$v" dist/stemn.app/Contents/Info.plist
+          plutil -replace CFBundleVersion -string "$v" dist/stemn.app/Contents/Info.plist
+          codesign --force --deep -s - dist/stemn.app
+          plutil -p dist/stemn.app/Contents/Info.plist | grep -i version
       - name: Smoke-Test
         shell: bash
         env:
@@ -69,8 +77,9 @@ jobs:
           if [ "$RUNNER_OS" = "Windows" ]; then EXE=./dist/stemn/stemn.exe; else EXE=./dist/stemn.app/Contents/MacOS/stemn; fi
           "$EXE" --selftest-gui
           python -c "import numpy as np, soundfile as sf; sf.write('smoke.wav', np.zeros((44100,2),'float32'), 44100)"
-          "$EXE" separate smoke.wav -s kick -o smoke-out
+          "$EXE" separate smoke.wav -s kick -o smoke-out --result-file smoke.json
           ls smoke-out | grep -q "kick"
+          grep -q '"stems"' smoke.json
       - name: Packen
         shell: bash
         run: |

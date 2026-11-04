@@ -25,7 +25,13 @@ def _cmd_separate(args) -> int:
                 print(f"  {stem:8s} {file}")
     if args.json:
         print(json.dumps(results, indent=2, ensure_ascii=False))
+    if args.result_file:
+        _write_result(args.result_file, {"stems": results})
     return 0
+
+
+def _write_result(path: str, data: dict) -> None:
+    Path(path).write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
 
 
 def _cmd_models_list(args) -> int:
@@ -93,6 +99,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("-o", "--output", help="Zielordner (Standard: '<Datei> stems' daneben)")
     s.add_argument("-q", "--quality", default="normal", choices=["fast", "normal", "best"], help="Tempo/Qualitaet (Standard: normal)")
     s.add_argument("--json", action="store_true", help="Ergebnis als JSON ausgeben")
+    s.add_argument("--result-file", help=argparse.SUPPRESS)  # used by the app window
     s.set_defaults(func=_cmd_separate)
 
     m = sub.add_parser("models", help="Modelle anzeigen oder importieren")
@@ -123,11 +130,19 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    result_file = getattr(args, "result_file", None)
     try:
         return args.func(args)
     except (ModelError, FileNotFoundError, ValueError) as exc:
         print(f"Fehler: {exc}", file=sys.stderr)
+        if result_file:
+            _write_result(result_file, {"error": str(exc)})
         return 2
+    except Exception as exc:
+        if not result_file:
+            raise
+        _write_result(result_file, {"error": f"{type(exc).__name__}: {exc}"})
+        return 3
 
 
 if __name__ == "__main__":

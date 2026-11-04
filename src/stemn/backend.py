@@ -8,6 +8,7 @@ works offline and accepts models that are not in that catalogue.
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 
 from audio_separator.separator import Separator
@@ -23,6 +24,21 @@ class LocalSeparator(Separator):
         kwargs.setdefault("use_soundfile", True)  # no ffmpeg needed for WAV/AIFF/FLAC
         super().__init__(**kwargs)
         self._specs: dict[str, ModelSpec] = {}
+
+    def setup_torch_device(self, system_info):
+        """Run on the CPU unless STEMN_DEVICE=auto.
+
+        On Apple Silicon audio-separator would pick the GPU backend (MPS), where
+        torch.istft can abort the whole process. The CPU of an M chip is fast
+        enough for drum loops and works the same everywhere.
+        """
+        if os.environ.get("STEMN_DEVICE", "cpu").lower() == "auto":
+            return super().setup_torch_device(system_info)
+        import torch
+
+        self.torch_device_cpu = torch.device("cpu")
+        self.torch_device = self.torch_device_cpu
+        self.onnx_execution_provider = ["CPUExecutionProvider"]
 
     # ffmpeg is only needed for mp3/m4a; stemn writes WAV via soundfile.
     def check_ffmpeg_installed(self):  # noqa: D401
