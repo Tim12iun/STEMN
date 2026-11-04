@@ -47,22 +47,34 @@ def test_rows_in_drum_order(window):
     assert [r.stem for r in window.rows] == ["kick", "snare", "hihat"]
 
 
-def test_mute_and_solo(window):
-    window.rows[1].mute.setChecked(True)
+def test_tick_boxes_and_only_this(window):
+    assert window.audible() == ["kick", "snare", "hihat"]  # all ticked after separating
+    window.rows[1].check.setChecked(False)
     assert window.audible() == ["kick", "hihat"]
-    window.rows[2].solo.setChecked(True)
+    window.only_this("hihat")  # right click / Alt-click / click on the name
     assert window.audible() == ["hihat"]
+    window.only_this("hihat")  # again: all back on
+    assert window.audible() == ["kick", "snare", "hihat"]
+
+
+def test_singles_drag_gives_one_file_per_ticked_stem(window):
+    window.rows[1].check.setChecked(False)
+    window.rows[2].fader.setValue(-30)
+    files = window.export_singles()
+    assert files[0] == window.stems["kick"]
+    assert files[1].name == "loop - hihat -3.0dB.wav" and files[1] != window.stems["hihat"]
+    assert len(files) == 2
 
 
 def test_player_mixes_audible_stems(window):
-    window.rows[0].mute.setChecked(True)  # kick off -> snare 0.2 + hihat 0.3
+    window.rows[0].check.setChecked(False)  # kick off -> snare 0.2 + hihat 0.3
     out = np.zeros((256, 2), dtype=np.float32)
     window.player._callback(out, 256, None, None)
     assert np.allclose(out, 0.5, atol=1e-3)
 
 
 def test_export_mix_writes_summed_file(window):
-    window.rows[0].mute.setChecked(True)
+    window.rows[0].check.setChecked(False)
     path = window.export_mix()
     audio, _ = sf.read(str(path))
     assert path.name == "loop - mix snare+hihat.wav"
@@ -70,7 +82,7 @@ def test_export_mix_writes_summed_file(window):
 
 
 def test_single_stem_drag_uses_stem_file(window):
-    window.rows[0].solo.setChecked(True)
+    window.only_this("kick")
     assert window.export_mix() == window.stems["kick"]
 
 
@@ -87,8 +99,8 @@ def test_replacing_loop_rebuilds_rows(window, app):
 
 
 def test_gain_fader_scales_playback_and_mix(window):
-    window.rows[1].mute.setChecked(True)
-    window.rows[2].mute.setChecked(True)
+    window.rows[1].check.setChecked(False)
+    window.rows[2].check.setChecked(False)
     window.rows[0].fader.setValue(-60)  # kick -6 dB
     assert window.rows[0].db.text() == "-6.0 dB"
     out = np.zeros((64, 2), dtype=np.float32)
