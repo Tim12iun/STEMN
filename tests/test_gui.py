@@ -111,3 +111,34 @@ def test_every_stem_row_has_its_own_grip(window):
     assert window.rows
     for strip in window.rows:
         assert strip.grip._path_provider() == strip.path
+
+
+class _FakeStream:
+    latency = 0.01
+
+    def stop(self):
+        pass
+
+    def close(self):
+        pass
+
+
+def test_space_plays_from_click_and_pause_keeps_position(window):
+    player = window.player
+    player.stream, player._stream_sr = _FakeStream(), player.sr  # no audio device in tests
+    window.on_seek(0.5)
+    start = player.pos
+    assert start == int(0.5 * player.length)
+    window.toggle_play()  # Space
+    assert player.playing
+    out = np.zeros((4410, 2), np.float32)
+    player._callback(out, 4410, None, None)  # 0.1 s played
+    window.toggle_play()  # Space again: stop
+    assert not player.playing
+    stopped = player.pos
+    assert 0 < stopped - start <= 4410
+    player._callback(out, 4410, None, None)  # device keeps running, outputs silence
+    assert not out.any() and player.pos == stopped
+    window.toggle_play()
+    assert player.playing and player.pos == stopped
+    player.close()

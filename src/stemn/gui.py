@@ -137,7 +137,8 @@ class Player:
     playback stays smooth even while the window redraws or a separation runs.
     """
 
-    BLOCK = 1024
+    BLOCK = 512
+    LATENCY = 0.06  # seconds; small enough to feel instant, large enough not to crackle
 
     def __init__(self) -> None:
         self.tracks: dict[str, np.ndarray] = {}
@@ -149,6 +150,9 @@ class Player:
         self.peak = 0.0
         self.stream = None
         self.error: str | None = None
+        self._running = False  # a test harness may call _callback without a device
+        self._stream_sr = None
+        self._since_seek = 0  # frames played since the last jump
         self._lock = threading.Lock()
 
     def load(self, files: dict[str, Path]) -> None:
@@ -189,13 +193,18 @@ class Player:
     def seek(self, frame: int) -> None:
         with self._lock:
             self.pos = int(min(max(frame, 0), max(self.length - 1, 0)))
+            self._since_seek = 0
 
     def _callback(self, out, frames, _time, _status):
+        if not self._running and self.stream is not None:
+            out.fill(0)
+            return
         with self._lock:
             mix, length, pos = self.mix, self.length, self.pos
             if not length:
                 out.fill(0)
                 return
+            self._since_seek += frames
             written = 0
             while written < frames:
                 n = min(frames - written, length - pos)
@@ -207,53 +216,74 @@ class Player:
 
     @property
     def heard_pos(self) -> int:
-        """Position that is actually audible now (the device buffer is ahead of it)."""
+        """Position that is audible now (the device buffer runs slightly ahead)."""
         pos = self.pos
-        if self.stream is not None and self.length:
+        if self._running and self.stream is not None and self.length:
             try:
-                pos -= int(float(self.stream.latency) * self.sr)
+                ahead = int(float(self.stream.latency) * self.sr)
             except Exception:
-                pass
+                ahead = 0
+            pos -= min(ahead, self._since_seek)  # right after a jump the new spot is what you hear
             pos %= self.length
         return pos
 
     @property
     def playing(self) -> bool:
-        return self.stream is not None
+        return self._running
+
+    def _ensure_stream(self) -> None:
+        """The audio device stays open, so Space starts and stops without delay."""
+        if self.stream is not None and self._stream_sr == self.sr:
+            return
+        self.close()
+        import sounddevice as sd
+
+        self.stream = sd.OutputStream(
+            samplerate=self.sr,
+            channels=2,
+            dtype="float32",
+            blocksize=self.BLOCK,
+            latency=self.LATENCY,
+            callback=self._callback,
+        )
+        self.stream.start()
+        self._stream_sr = self.sr
 
     def play(self) -> bool:
-        if self.playing or not self.length:
-            return self.playing
+        if self._running or not self.length:
+            return self._running
         try:
-            import sounddevice as sd
-
-            self.stream = sd.OutputStream(
-                samplerate=self.sr,
-                channels=2,
-                dtype="float32",
-                blocksize=self.BLOCK,
-                latency="high",
-                callback=self._callback,
-            )
-            self.stream.start()
-            return True
+            self._ensure_stream()
         except Exception as exc:  # no audio device / PortAudio missing
             self.error = str(exc)
             self.stream = None
             return False
+        self._running = True
+        return True
 
     def pause(self) -> None:
-        if self.stream is not None:
-            try:
-                self.stream.stop()
-                self.stream.close()
-            finally:
-                self.stream = None
+        """Stop where it is audible right now; the next play continues exactly there."""
+        if self._running:
+            pos = self.heard_pos
+            self._running = False
+            with self._lock:
+                self.pos = pos
         self.peak = 0.0
 
     def stop(self) -> None:
         self.pause()
         self.pos = 0
+
+    def close(self) -> None:
+        self._running = False
+        if self.stream is not None:
+            try:
+                self.stream.stop()
+                self.stream.close()
+            except Exception:
+                pass
+            finally:
+                self.stream = None
 
 
 # --------------------------------------------------------------------------- worker
@@ -869,6 +899,7 @@ class MainWindow(QMainWindow):
         self.timer.timeout.connect(self.tick)
         self.timer.start()
         self._set_loaded(False)
+        self._no_focus()
 
         if self.model_box.count() == 0:
             self.import_btn.setEnabled(False)
@@ -898,7 +929,11 @@ class MainWindow(QMainWindow):
         self.play_btn.setObjectName("transport")
         self.play_btn.setCheckable(True)
         self.play_btn.setToolTip("Abspielen / Pause · Leertaste")
-        self.play_btn.setShortcut(Qt.Key_Space)
+        from PySide6.QtGui import QKeySequence, QShortcut
+
+        space = QShortcut(QKeySequence(Qt.Key_Space), self)
+        space.setContext(Qt.WindowShortcut)
+        space.activated.connect(self.toggle_play)
         self.play_btn.clicked.connect(self.toggle_play)
         lay.addWidget(self.to_start_btn)
         lay.addWidget(self.play_btn)
@@ -974,6 +1009,11 @@ class MainWindow(QMainWindow):
         lbl = QLabel(text)
         lbl.setObjectName("section")
         return lbl
+
+    def _no_focus(self) -> None:
+        """No button, fader or list takes the keyboard: Space always means play/stop."""
+        for w in self.findChildren(QWidget):
+            w.setFocusPolicy(Qt.NoFocus)
 
     def _set_loaded(self, loaded: bool) -> None:
         """loaded = stems exist. Before that only the loop itself can be played."""
@@ -1074,6 +1114,7 @@ class MainWindow(QMainWindow):
         if self.source:
             self.file_label.setText(self.source.name)
         self.update_gains()
+        self._no_focus()
         if was_playing:
             self.toggle_play()
 
@@ -1188,7 +1229,7 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, e):
         self.timer.stop()
-        self.player.stop()
+        self.player.close()
         super().closeEvent(e)
 
 
