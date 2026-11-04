@@ -1,6 +1,8 @@
 name: Build
 
-# Baut fertige Pakete fuer Mac (Apple Silicon) und Windows, inkl. Modell.
+# Baut fertige Pakete fuer Mac (Apple Silicon) und, nur auf Wunsch, Windows, inkl. Modell.
+# Mac zuerst: Windows wird erst gebaut, wenn der Mac-Stand passt (Haken "windows"
+# beim manuellen Start oder ein Tag v*).
 # Manuell starten (optional mit Versionsnummer -> Release) oder per Tag v*.
 on:
   workflow_dispatch:
@@ -9,6 +11,10 @@ on:
         description: "Versionsnummer fuer ein Release, z.B. 0.2.0 (leer = nur bauen)"
         required: false
         default: ""
+      windows:
+        description: "Auch die Windows-Version bauen"
+        type: boolean
+        default: false
   push:
     tags: ["v*"]
 
@@ -17,11 +23,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - os: macos-14
-            name: stemn-macos-arm64
-          - os: windows-latest
-            name: stemn-windows-x64
+        include: ${{ fromJSON((inputs.windows || startsWith(github.ref, 'refs/tags/v')) && '[{"os":"macos-14","name":"stemn-macos-arm64"},{"os":"windows-latest","name":"stemn-windows-x64"}]' || '[{"os":"macos-14","name":"stemn-macos-arm64"}]') }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
