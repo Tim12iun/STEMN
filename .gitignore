@@ -10,3 +10,4 @@ models/**/*.ckpt
 models/**/*.th
 models/**/*.onnx
 models/**/*.part
+src/stemn/_build_token.py

@@ -49,6 +49,31 @@ def _cmd_models_import(args) -> int:
     return 0
 
 
+def _cmd_update(args) -> int:
+    from . import updater
+
+    if args.token:
+        cfg = updater.load_config()
+        cfg["github_token"] = args.token
+        updater.save_config(cfg)
+        print(f"Token gespeichert in {updater.config_path()}")
+    if args.auto is not None:
+        cfg = updater.load_config()
+        cfg["auto_update"] = args.auto == "on"
+        updater.save_config(cfg)
+        print(f"Automatische Updates: {args.auto}")
+    try:
+        if args.check:
+            rel = updater.check()
+            print(f"Neue Version {rel.version} verfuegbar." if rel else f"stemn {__version__} ist aktuell.")
+        else:
+            print(updater.run_update())
+    except updater.UpdateError as exc:
+        print(f"Fehler: {exc}", file=sys.stderr)
+        return 2
+    return 0
+
+
 def _cmd_serve(args) -> int:
     from .server import serve
 
@@ -82,6 +107,12 @@ def build_parser() -> argparse.ArgumentParser:
     mi.add_argument("--id", help="Modell-ID (Standard: aus dem Namen)")
     mi.add_argument("--arch", default="mdxc", help="mdxc (MDX23C/Roformer, Standard) oder demucs")
     mi.set_defaults(func=_cmd_models_import)
+
+    u = sub.add_parser("update", help="nach neuer Version suchen und installieren")
+    u.add_argument("--check", action="store_true", help="nur pruefen, nichts installieren")
+    u.add_argument("--token", help="GitHub-Token (nur Lesezugriff) speichern")
+    u.add_argument("--auto", choices=["on", "off"], help="automatische Updates beim Start an/aus")
+    u.set_defaults(func=_cmd_update)
 
     v = sub.add_parser("serve", help="lokalen Dienst fuer Max for Live / Ableton starten")
     v.add_argument("--host", default="127.0.0.1")

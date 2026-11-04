@@ -30,10 +30,24 @@ jobs:
           path: models/**/*.ckpt
           key: models-${{ hashFiles('models/*/stemn-model.yaml') }}
       - run: python scripts/fetch_models.py
+      - name: Update-Token einbauen (nur Lesezugriff auf dieses Repo)
+        shell: bash
+        env:
+          TOKEN: ${{ secrets.STEMN_UPDATE_TOKEN }}
+        run: |
+          if [ -z "$TOKEN" ]; then echo "::warning::Secret STEMN_UPDATE_TOKEN fehlt, automatische Updates sind im Paket aus"; fi
+          printf 'TOKEN = "%s"\n' "$TOKEN" > src/stemn/_build_token.py
+      - name: Version aus Tag setzen
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          v="${GITHUB_REF_NAME#v}"
+          sed -i.bak "s/^__version__ = .*/__version__ = \"$v\"/" src/stemn/__init__.py && rm src/stemn/__init__.py.bak
       - name: PyInstaller
         run: >
           pyinstaller --noconfirm --clean --name stemn
           --collect-all audio_separator
+          --hidden-import stemn._build_token
           --collect-data librosa
           --copy-metadata audio-separator
           --add-data "models${{ runner.os == 'Windows' && ';' || ':' }}models"
@@ -50,11 +64,18 @@ jobs:
         shell: bash
         run: |
           cd dist
-          if [ "$RUNNER_OS" = "Windows" ]; then 7z a ../${{ matrix.name }}.zip stemn; else zip -qry ../${{ matrix.name }}.zip stemn; fi
+          # volles Paket (mit Modell) und kleines App-Paket (ohne Modellgewichte) fuer Updates
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            7z a ../${{ matrix.name }}.zip stemn
+            7z a ../${{ matrix.name }}-app.zip stemn '-xr!*.ckpt' '-xr!*.th'
+          else
+            zip -qry ../${{ matrix.name }}.zip stemn
+            zip -qry ../${{ matrix.name }}-app.zip stemn -x '*.ckpt' '*.th'
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.name }}
-          path: ${{ matrix.name }}.zip
+          path: ${{ matrix.name }}*.zip
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')

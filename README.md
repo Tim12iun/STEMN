@@ -27,6 +27,24 @@ Eingangsformate: WAV, AIFF, FLAC.
 
 Stem-Namen: `kick`, `snare`, `hihat`, `toms`, `ride`, `crash` und `cymbals` (= Ride + Crash zusammen).
 
+## Updates
+
+stemn sucht beim Start des Dienstes (`stemn serve`) selbst nach einer neuen Version im Repo
+und installiert sie, sobald stemn beendet ist. Das Modell wird nur neu geladen, wenn es sich geaendert hat.
+
+```bash
+stemn update            # jetzt pruefen und installieren
+stemn update --check    # nur pruefen
+stemn update --auto off # automatische Updates aus
+```
+
+Neue Version veroeffentlichen: `__version__` ist egal, einfach einen Tag pushen, z.B. `git tag v0.2.0 && git push --tags`.
+Der Build erstellt dann das Release mit den Paketen.
+
+Weil das Repo privat ist, braucht stemn einen GitHub-Token mit **nur Lesezugriff auf dieses Repo**.
+Er wird beim Build aus dem Repo-Secret `STEMN_UPDATE_TOKEN` ins Paket eingebaut.
+Alternativ pro Rechner: `stemn update --token <TOKEN>`.
+
 ## Weitere Modelle hinzufuegen
 
 Ohne Code zu aendern:
