@@ -929,7 +929,7 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle(f"stemn {__version__}")
-        self.resize(1240, 560)
+        self.resize(1300, 560)
         self.setMinimumSize(860, 420)
         self.player = Player()
         self.rows: list[StemStrip] = []
@@ -1058,8 +1058,14 @@ class MainWindow(QMainWindow):
         self.export_btn.clicked.connect(self.export_dialog)
         self.gear_btn = GearButton()
         self.gear_btn.clicked.connect(self.open_settings)
-        for w in (self.import_btn, self.folder_btn, self.mix_grip, self.single_grip, self.export_btn, self.separate_btn):
-            lay.addWidget(w)
+        # groups: loop (Öffnen, Ordner) | TRENNEN | export (Mix, Einzeln, EXPORTIEREN) | gear
+        for group in ((self.import_btn, self.folder_btn), (self.separate_btn,), (self.mix_grip, self.single_grip, self.export_btn)):
+            if group[0] is not self.import_btn:
+                lay.addSpacing(8)
+                lay.addWidget(_divider())
+                lay.addSpacing(8)
+            for w in group:
+                lay.addWidget(w)
         lay.addSpacing(6)
         lay.addWidget(self.gear_btn)
         # both always keep their size; only one of them is orange at a time
@@ -1537,6 +1543,14 @@ class UpdateWorker(QObject):
             self.installed.emit(rel.version, "")
         except Exception as exc:
             self.installed.emit(rel.version, str(exc))
+
+
+def _divider() -> QFrame:
+    """Thin vertical line between button groups in the top bar."""
+    line = QFrame()
+    line.setFixedSize(1, 22)
+    line.setStyleSheet(f"background: {LINE};")
+    return line
 
 
 def download_icon(color: str) -> "QIcon":

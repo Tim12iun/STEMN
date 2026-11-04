@@ -208,7 +208,7 @@ def test_nothing_moves_when_clicking(window, app):
     """loomn: no click changes the size or place of anything on screen."""
     from PySide6.QtWidgets import QWidget
 
-    window.resize(1240, 640)
+    window.resize(1300, 640)
     window.show()
     app.processEvents()
 
