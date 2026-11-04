@@ -14,9 +14,9 @@ Status: App mit Oberflaeche (Mac und Windows). Das Max-for-Live-Device folgt.
    - **Windows:** Ordner `stemn` irgendwohin legen, `stemn.exe` starten. Bei der SmartScreen-Warnung *Weitere Informationen* → *Trotzdem ausfuehren*.
 3. Drum-Loop ins Fenster ziehen. Er wird sofort angezeigt und laesst sich mit der Leertaste abspielen.
 4. **TRENNEN** druecken. Ein Balken zeigt den Fortschritt, getrennt wird immer in bester Qualitaet. Danach:
-   - **Häkchen** schaltet eine Spur an oder aus. Klick auf den Namen, Rechtsklick oder Alt-Klick aufs Häkchen: nur diese Spur (noch mal: alle). Leertaste spielt ab der Klickposition.
+   - **Klick auf den Namen** schaltet eine Spur an oder aus (aus = durchgestrichen). **S** spielt nur diese Spur, noch mal **S** stellt den vorherigen Zustand her. Leertaste spielt ab der Klickposition.
    - **Griff rechts** an jeder Spur (Feld mit Punkten) greifen und ziehen: die Spur direkt in Ableton ins Arrangement oder auf eine Spur ziehen.
-   - **⠿ Mix** ziehen: alle angehakten Spuren als eine Datei. **⠿ Einzeln** ziehen: jede angehakte Spur als eigene Datei (in Ableton beim Loslassen ⌘ bzw. Strg halten, dann landet jede auf einer eigenen Spur).
+   - **⠿ Mix** ziehen: alle eingeschalteten Spuren als eine Datei. **⠿ Einzeln** ziehen: jede eingeschaltete Spur als eigene Datei (in Ableton beim Loslassen ⌘ bzw. Strg halten, dann landet jede auf einer eigenen Spur).
 
 Die Dateien liegen im Ordner `<Loop> stems` neben dem Original und sind sample-genau gleich lang, also direkt auf dem Grid.
 Am besten funktioniert es mit einer **reinen Drum-Spur** (z.B. vorher mit der Stem-Separation in Live die Drums trennen).

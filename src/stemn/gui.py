@@ -506,23 +506,26 @@ class Meter(QWidget):
         p.fillRect(QRectF(0, 0, r.width() * self.level, r.height()), color)
 
 
-class StemCheck(QWidget):
-    """Tick box in the stem colour: ticked = audible.
+class StemName(QWidget):
+    """Colour field and name of a stem; a click switches the stem on or off.
 
-    Left click: on/off. Right click or Alt-click: only this stem (solo);
-    the same again turns all stems back on.
+    on: colour field filled, name bright white
+    off: colour field empty, name grey and struck through
+    nearly empty stem: name greyed out (with tooltip)
     """
 
     toggled = Signal(bool)
-    only_this = Signal()
+    clicked = Signal()
 
-    def __init__(self, color: str) -> None:
+    def __init__(self, stem: str, color: str) -> None:
         super().__init__()
+        self.text = STEM_LABELS.get(stem, stem.title())
         self.color = QColor(color)
         self._checked = True
-        self.setFixedSize(20, 20)
+        self.faint = False  # nearly empty
+        self.setFixedSize(84, 24)
         self.setCursor(Qt.PointingHandCursor)
-        self.setToolTip("Klick: Spur an/aus · Rechtsklick, Alt-Klick oder Klick auf den Namen: nur diese Spur")
+        self.setToolTip("Klick: Spur an/aus")
 
     def isChecked(self) -> bool:
         return self._checked
@@ -534,47 +537,40 @@ class StemCheck(QWidget):
             self.toggled.emit(on)
 
     def mousePressEvent(self, e):
-        if e.button() == Qt.RightButton or (e.button() == Qt.LeftButton and e.modifiers() & Qt.AltModifier):
-            self.only_this.emit()
-        elif e.button() == Qt.LeftButton:
-            self.setChecked(not self._checked)
+        if e.button() == Qt.LeftButton:
+            self.clicked.emit()
 
     def paintEvent(self, _e):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
-        r = QRectF(self.rect()).adjusted(1.5, 1.5, -1.5, -1.5)
+        box = QRectF(1, (self.height() - 14) / 2, 14, 14)
         if self._checked:
             p.setPen(Qt.NoPen)
             p.setBrush(self.color)
-            p.drawRoundedRect(r, 4, 4)
-            pen = QPen(QColor(BG), 2.2)
-            pen.setCapStyle(Qt.RoundCap)
-            pen.setJoinStyle(Qt.RoundJoin)
-            p.setPen(pen)
-            path = QPainterPath(QPointF(r.left() + 4, r.center().y() + 0.5))
-            path.lineTo(QPointF(r.left() + 7.5, r.bottom() - 4.5))
-            path.lineTo(QPointF(r.right() - 3.5, r.top() + 4.5))
-            p.setBrush(Qt.NoBrush)
-            p.drawPath(path)
         else:
-            p.setPen(QPen(QColor(MUTED), 1.5))
+            dim = QColor(self.color)
+            dim.setAlpha(110)
+            p.setPen(QPen(dim, 1.5))
             p.setBrush(Qt.NoBrush)
-            p.drawRoundedRect(r, 4, 4)
-
-
-class ClickLabel(QLabel):
-    clicked = Signal()
-
-    def mousePressEvent(self, e):
-        if e.button() in (Qt.LeftButton, Qt.RightButton):
-            self.clicked.emit()
+        p.drawRoundedRect(box, 3, 3)
+        font = QFont(FONT_FAMILY, 15, QFont.DemiBold)
+        font.setStrikeOut(not self._checked)
+        p.setFont(font)
+        if not self._checked:
+            p.setPen(QColor(MUTED))
+        elif self.faint:
+            p.setPen(QColor("#B4B0A9"))
+        else:
+            p.setPen(QColor(TEXT))
+        p.drawText(QRectF(box.right() + 9, 0, self.width() - box.right() - 9, self.height()), Qt.AlignVCenter | Qt.AlignLeft, self.text)
 
 
 class StemStrip(QFrame):
-    """One stem in the side panel: tick box, name, gain fader, dB, drag handle."""
+    """One stem in the side panel: colour + name (on/off), gain fader, dB, S, drag handle."""
 
     changed = Signal()
-    only_this = Signal(str)
+    name_clicked = Signal(str)
+    solo_clicked = Signal(str)
 
     def __init__(self, stem: str, path: Path) -> None:
         super().__init__()
@@ -585,13 +581,7 @@ class StemStrip(QFrame):
         lay.setContentsMargins(0, 2, 0, 2)
         lay.setSpacing(6)
 
-        self.check = StemCheck(color)
-        name = ClickLabel(STEM_LABELS.get(stem, stem.title()))
-        name.setStyleSheet("font-weight:600;")
-        name.setFixedWidth(56)
-        name.setCursor(Qt.PointingHandCursor)
-        name.setToolTip("Klick: nur diese Spur hören · noch mal: alle")
-        self.hint = name  # "fast leer" is shown via a dimmed name + tooltip
+        self.check = StemName(stem, color)
         self.fader = QSlider(Qt.Horizontal)
         self.fader.setRange(int(GAIN_MIN_DB * 10), int(GAIN_MAX_DB * 10))
         self.fader.setValue(0)
@@ -601,27 +591,29 @@ class StemStrip(QFrame):
         self.db.setAlignment(Qt.AlignCenter)
         self.db.setFixedWidth(62)  # longest value "-30.0 dB" fits, nothing jumps
         self.db.setFont(tabular_font(14))
+        self.solo = QPushButton("S")
+        self.solo.setObjectName("small")
+        self.solo.setCheckable(True)
+        self.solo.setToolTip("Solo: nur diese Spur · noch mal drücken: vorheriger Zustand")
         grip = StemGrip(color, self._drag_path, "Greifen und ziehen: nur diese Spur in Ableton ablegen (Arrangement oder Spur)")
         self.grip = grip
         lay.addWidget(self.check)
-        lay.addSpacing(2)
-        lay.addWidget(name)
         lay.addWidget(self.fader, 1)
-        for w in (self.db, grip):
+        for w in (self.db, self.solo, grip):
             lay.addWidget(w)
 
         self.fader.valueChanged.connect(self._on_fader)
         self.check.toggled.connect(self._on_toggled)
-        self.check.only_this.connect(lambda: self.only_this.emit(self.stem))
-        name.clicked.connect(lambda: self.only_this.emit(self.stem))
+        self.check.clicked.connect(lambda: self.name_clicked.emit(self.stem))
+        self.solo.clicked.connect(lambda: self.solo_clicked.emit(self.stem))
         self.db.installEventFilter(self)
 
         try:
             audio, _ = sf.read(str(path), dtype="float32")
             peak = float(np.abs(audio).max()) if audio.size else 0.0
             if 20 * np.log10(max(peak, 1e-9)) < -35:
-                self.hint.setStyleSheet(f"font-weight:600; color:{MUTED};")
-                self.hint.setToolTip("Fast leer: in diesem Loop kommt das Instrument kaum vor")
+                self.check.faint = True
+                self.check.setToolTip("Klick: Spur an/aus · fast leer: in diesem Loop kommt das Instrument kaum vor")
         except Exception:
             pass
 
@@ -926,6 +918,8 @@ class MainWindow(QMainWindow):
         self.source: Path | None = None
         self.stems: dict[str, Path] = {}
         self._thread: QThread | None = None
+        self._solo: str | None = None
+        self._before_solo: dict[str, bool] | None = None
         self._last_pos = -1
 
         root = QWidget()
@@ -1008,11 +1002,11 @@ class MainWindow(QMainWindow):
         self.folder_btn = QPushButton("Ordner")
         self.folder_btn.setToolTip("Ordner mit allen Spuren öffnen")
         self.folder_btn.clicked.connect(self.open_folder)
-        self.mix_grip = DragGrip("⠿ Mix", self.export_mix, "Ziehen: alle angehakten Spuren zusammen als eine Datei")
+        self.mix_grip = DragGrip("⠿ Mix", self.export_mix, "Ziehen: alle eingeschalteten Spuren zusammen als eine Datei")
         self.single_grip = DragGrip(
             "⠿ Einzeln",
             self.export_singles,
-            "Ziehen: alle angehakten Spuren als einzelne Dateien.\n"
+            "Ziehen: alle eingeschalteten Spuren als einzelne Dateien.\n"
             "In Ableton beim Loslassen ⌘ (Mac) bzw. Strg (Windows) halten: jede Spur landet auf einer eigenen Spur.",
         )
         self.separate_btn = QPushButton("TRENNEN")
@@ -1165,7 +1159,8 @@ class MainWindow(QMainWindow):
         for stem in sorted(self.stems, key=lambda s: STEM_ORDER.index(s) if s in STEM_ORDER else 99):
             row = StemStrip(stem, self.stems[stem])
             row.changed.connect(self.update_gains)
-            row.only_this.connect(self.only_this)
+            row.name_clicked.connect(self.toggle_stem)
+            row.solo_clicked.connect(self.toggle_solo)
             self.rows_box.addWidget(row)
             self.rows.append(row)
         was_playing = self.player.playing
@@ -1176,7 +1171,7 @@ class MainWindow(QMainWindow):
         self.wave.set_stems(self.stems)
         self._set_loaded(True)
         folder = next(iter(self.stems.values())).parent
-        self.status.setText("Häkchen: Spur an/aus · Klick auf den Namen: nur diese Spur · Griff rechts: Spur nach Ableton ziehen")
+        self.status.setText("Klick auf den Namen: Spur an/aus · S: nur diese Spur · Griff rechts: Spur nach Ableton ziehen")
         if self.source:
             self.file_label.setText(self.source.name)
         self.update_gains()
@@ -1190,6 +1185,7 @@ class MainWindow(QMainWindow):
             row.deleteLater()
         self.rows = []
         self.stems = {}
+        self._solo, self._before_solo = None, None
         self.empty_rows.show()
         self._set_loaded(False)
 
@@ -1197,14 +1193,37 @@ class MainWindow(QMainWindow):
     def audible(self) -> list[str]:
         return [r.stem for r in self.rows if r.check.isChecked()]
 
-    def only_this(self, stem: str) -> None:
-        """Solo: only this stem on. If that is already the case, all stems back on."""
-        already = all(r.check.isChecked() == (r.stem == stem) for r in self.rows)
+    def _set_on(self, states: dict[str, bool]) -> None:
         for r in self.rows:
             r.check.blockSignals(True)
-            r.check.setChecked(True if already else r.stem == stem)
+            r.check.setChecked(states.get(r.stem, True))
             r.check.blockSignals(False)
         self.update_gains()
+
+    def _set_solo_light(self, stem: str | None) -> None:
+        self._solo = stem
+        for r in self.rows:
+            r.solo.blockSignals(True)
+            r.solo.setChecked(r.stem == stem)
+            r.solo.blockSignals(False)
+
+    def toggle_solo(self, stem: str) -> None:
+        """S: only this stem on, S lights up. S again: back to how it was before."""
+        if self._solo == stem:
+            before = self._before_solo or {}
+            self._set_solo_light(None)
+            self._set_on(before)
+            return
+        if self._solo is None:
+            self._before_solo = {r.stem: r.check.isChecked() for r in self.rows}
+        self._set_solo_light(stem)
+        self._set_on({r.stem: r.stem == stem for r in self.rows})
+
+    def toggle_stem(self, stem: str) -> None:
+        """Click on a name: that stem on/off. Ends a solo (its S goes dark)."""
+        row = next(r for r in self.rows if r.stem == stem)
+        self._set_solo_light(None)
+        row.check.setChecked(not row.check.isChecked())
 
     def current_gains(self) -> dict[str, float]:
         on = set(self.audible())
@@ -1284,7 +1303,7 @@ class MainWindow(QMainWindow):
         return target
 
     def export_singles(self) -> list[Path]:
-        """Files for dragging: every ticked stem as its own file, with its fader level."""
+        """Files for dragging: every stem that is on as its own file, with its fader level."""
         files = []
         for r in self.rows:
             if not r.check.isChecked():

@@ -47,14 +47,23 @@ def test_rows_in_drum_order(window):
     assert [r.stem for r in window.rows] == ["kick", "snare", "hihat"]
 
 
-def test_tick_boxes_and_only_this(window):
-    assert window.audible() == ["kick", "snare", "hihat"]  # all ticked after separating
-    window.rows[1].check.setChecked(False)
+def test_names_switch_stems_and_solo_button(window):
+    assert window.audible() == ["kick", "snare", "hihat"]  # all on after separating
+    window.toggle_stem("snare")  # click on the name
     assert window.audible() == ["kick", "hihat"]
-    window.only_this("hihat")  # right click / Alt-click / click on the name
+    window.toggle_solo("hihat")  # S lights up, only hi-hat
     assert window.audible() == ["hihat"]
-    window.only_this("hihat")  # again: all back on
-    assert window.audible() == ["kick", "snare", "hihat"]
+    assert [r.solo.isChecked() for r in window.rows] == [False, False, True]
+    window.toggle_solo("hihat")  # S again: back to before
+    assert window.audible() == ["kick", "hihat"]
+    assert not any(r.solo.isChecked() for r in window.rows)
+
+
+def test_clicking_a_name_ends_solo(window):
+    window.toggle_solo("kick")
+    window.toggle_stem("snare")  # another stem comes in, S goes dark
+    assert window.audible() == ["kick", "snare"]
+    assert not any(r.solo.isChecked() for r in window.rows)
 
 
 def test_singles_drag_gives_one_file_per_ticked_stem(window):
@@ -82,7 +91,7 @@ def test_export_mix_writes_summed_file(window):
 
 
 def test_single_stem_drag_uses_stem_file(window):
-    window.only_this("kick")
+    window.toggle_solo("kick")
     assert window.export_mix() == window.stems["kick"]
 
 
