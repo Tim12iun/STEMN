@@ -76,11 +76,6 @@ def _cmd_update(args) -> int:
         cfg["github_token"] = args.token
         updater.save_config(cfg)
         print(f"Token gespeichert in {updater.config_path()}")
-    if args.auto is not None:
-        cfg = updater.load_config()
-        cfg["auto_update"] = args.auto == "on"
-        updater.save_config(cfg)
-        print(f"Automatische Updates: {args.auto}")
     try:
         if args.check:
             rel = updater.check()
@@ -132,7 +127,6 @@ def build_parser() -> argparse.ArgumentParser:
     u = sub.add_parser("update", help="nach neuer Version suchen und installieren")
     u.add_argument("--check", action="store_true", help="nur pruefen, nichts installieren")
     u.add_argument("--token", help="GitHub-Token (nur Lesezugriff) speichern")
-    u.add_argument("--auto", choices=["on", "off"], help="automatische Updates beim Start an/aus")
     u.set_defaults(func=_cmd_update)
 
     v = sub.add_parser("serve", help="lokalen Dienst fuer Max for Live / Ableton starten")

@@ -1347,10 +1347,8 @@ class MainWindow(QMainWindow):
 
     # ---- updates
     def startup_update_check(self) -> None:
-        from . import updater
-
-        auto = updater.load_config().get("auto_update", True) and updater.install_root() is not None
-        self.check_updates(install=auto)
+        """Only look; installing is always the user's choice (Einstellungen)."""
+        self.check_updates(install=False)
 
     def check_updates(self, install: bool) -> None:
         if self._update_thread is not None:
@@ -1397,7 +1395,7 @@ class MainWindow(QMainWindow):
         tips = {
             "available": f"Update auf {version} verfügbar",
             "downloading": f"Update auf {version} wird geladen",
-            "ready": f"Update auf {version} bereit: wird beim Beenden installiert",
+            "ready": f"Update auf {version} geladen: in den Einstellungen neu starten",
         }
         self.gear_btn.set_badge(phase in tips, tips.get(phase, ""))
         self.update_changed.emit()
@@ -1483,7 +1481,7 @@ class GearButton(QPushButton):
 
 
 class SettingsDialog(QDialog):
-    """Version, updates (search, install, automatic on/off)."""
+    """Version and updates: search, download, restart. Nothing is installed by itself."""
 
     def __init__(self, win: "MainWindow") -> None:
         super().__init__(win)
@@ -1518,13 +1516,7 @@ class SettingsDialog(QDialog):
         row.addStretch(1)
         row.addWidget(self.install_btn)
         lay.addLayout(row)
-        lay.addSpacing(6)
-        lay.addWidget(MainWindow._caption("AUTOMATISCH AKTUALISIEREN"))
-        self.auto = SegmentSwitch([("An", "on"), ("Aus", "off")], default="on" if updater.load_config().get("auto_update", True) else "off")
-        for b in self.auto.findChildren(QPushButton):
-            b.clicked.connect(lambda _=False: self._set_auto(self.auto.currentData()))
-        lay.addWidget(self.auto)
-        hint = QLabel("An: neue Versionen werden beim Start geladen und beim Beenden installiert.")
+        hint = QLabel("stemn sucht beim Start nach Updates und zeigt sie am Zahnrad an. Installiert wird nur, wenn du es hier auslöst.")
         hint.setObjectName("muted")
         hint.setWordWrap(True)
         lay.addWidget(hint)
@@ -1532,13 +1524,6 @@ class SettingsDialog(QDialog):
             w.setFocusPolicy(Qt.NoFocus)
         win.update_changed.connect(self.refresh)
         self.refresh()
-
-    def _set_auto(self, value: str) -> None:
-        from . import updater
-
-        cfg = updater.load_config()
-        cfg["auto_update"] = value == "on"
-        updater.save_config(cfg)
 
     def refresh(self) -> None:
         st = self.win.update_state
@@ -1554,8 +1539,7 @@ class SettingsDialog(QDialog):
             "current": f"stemn {__version__} ist aktuell.",
             "available": f"Version {st.get('version')} ist verfügbar.",
             "downloading": f"Version {st.get('version')} wird geladen …",
-            "ready": f"Version {st.get('version')} ist geladen und wird beim Beenden installiert. "
-            "„Neu starten“ installiert sie sofort.",
+            "ready": f"Version {st.get('version')} ist geladen. „Neu starten“ installiert sie und öffnet stemn wieder.",
             "error": f"Update nicht möglich: {st.get('error')}",
         }
         self.status.setText(texts.get(st["phase"], ""))

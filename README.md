@@ -37,13 +37,12 @@ Stem-Namen: `kick`, `snare`, `hihat`, `toms`, `ride`, `crash` und `cymbals` (= R
 
 ## Updates
 
-stemn sucht beim Start der App (und des Dienstes `stemn serve`) selbst nach einer neuen Version im Repo. Ein oranger Punkt am Zahnrad oben rechts zeigt ein Update an; in den Einstellungen kann man es sofort installieren (Neu starten) oder die Automatik ausschalten.
-und installiert sie, sobald stemn beendet ist. Das Modell wird nur neu geladen, wenn es sich geaendert hat.
+stemn sucht beim Start der App nach einer neuen Version im Repo, installiert aber nie von selbst. Ein oranger Punkt am Zahnrad oben rechts zeigt ein Update an; in den Einstellungen laedt *Jetzt aktualisieren* es, *Neu starten* installiert es.
+Das Modell wird nur neu geladen, wenn es sich geaendert hat.
 
 ```bash
 stemn update            # jetzt pruefen und installieren
 stemn update --check    # nur pruefen
-stemn update --auto off # automatische Updates aus
 ```
 
 Neue Version veroeffentlichen: auf GitHub unter *Actions → Build → Run workflow* eine hoehere
