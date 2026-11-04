@@ -95,3 +95,14 @@ pytest
 ```
 
 Builds laufen in GitHub Actions (`.github/workflows/build.yml`), manuell oder per Tag `v*`.
+
+## Plattformen und Releases
+
+- **Mac hat Vorrang** (Apple Silicon). Dort wird getestet.
+- Jede Version wird gleichzeitig auch fuer **Windows** gebaut und veroeffentlicht, dort aber nicht von Hand getestet (nur die automatischen Tests und der Start-Test im Build).
+
+## Design
+
+Die Oberflaeche folgt der loomn-Design-Language: Name klein mit orangem Punkt, warme Grautoene,
+Orange `#FF5A1F` nur fuer Aktives und die eine Hauptaktion (Exportieren), Spurfarben nur gedaempft als Kennfarben,
+Schrift Barlow Condensed (SIL Open Font License, mitgeliefert in `src/stemn/fonts`).

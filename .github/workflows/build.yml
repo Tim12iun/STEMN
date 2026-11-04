@@ -59,6 +59,7 @@ jobs:
           --collect-data librosa
           --copy-metadata audio-separator
           --add-data "models${{ runner.os == 'Windows' && ';' || ':' }}models"
+          --add-data "src/stemn/fonts${{ runner.os == 'Windows' && ';' || ':' }}stemn/fonts"
           scripts/stemn_entry.py
       - name: Smoke-Test
         shell: bash

@@ -40,45 +40,82 @@ STEM_LABELS = {
     "cymbals": "Becken",
 }
 STEM_ORDER = ["kick", "snare", "hihat", "toms", "ride", "crash", "cymbals"]
+# Kennfarben fuer Inhalte (gedaempft, nie Bedienfarben). Orange bleibt der einzige Akzent.
 STEM_COLORS = {
-    "kick": "#ff6b4a",
-    "snare": "#ffd23f",
-    "hihat": "#3ddcff",
-    "toms": "#a77bff",
-    "ride": "#5cf29a",
-    "crash": "#ff6fd8",
-    "cymbals": "#5cf29a",
+    "kick": "#c4694c",
+    "snare": "#c2a14e",
+    "hihat": "#5f9fb0",
+    "toms": "#8a7bb4",
+    "ride": "#6fa983",
+    "crash": "#ad7299",
+    "cymbals": "#6fa983",
 }
-QUALITIES = [("Normal", "normal"), ("Schnell", "fast"), ("Beste", "best")]
+ACCENT = "#FF5A1F"
+BG, SURFACE, RAISED, RAISED2, LINE = "#141414", "#1C1B1A", "#232221", "#2A2928", "#32312F"
+TEXT, MUTED, DANGER = "#F0EEE9", "#8F8C86", "#B5483B"
+FONT_FAMILY = "Barlow Condensed"
+QUALITIES = [("Schnell", "fast"), ("Normal", "normal"), ("Beste", "best")]
 GAIN_MIN_DB, GAIN_MAX_DB = -30.0, 6.0
 ENVELOPE_BINS = 4096
 
-STYLE = """
-QWidget { background: #111216; color: #e6e7ea; font-size: 12px; }
-QFrame#topbar { background: #191a20; border-bottom: 1px solid #262830; }
-QFrame#panel { background: #16171c; border-left: 1px solid #262830; }
-QFrame#panel QLabel, QFrame#topbar QLabel { background: transparent; }
-QLabel#logo { font-size: 18px; font-weight: 700; letter-spacing: 2px; color: #f5a524; }
-QLabel#time { font-family: Menlo, Consolas, monospace; font-size: 13px; color: #cfd1d6; }
-QLabel#muted { color: #8a8d95; background: transparent; }
-QLabel#file { font-family: Menlo, Consolas, monospace; color: #cfd1d6; }
-QPushButton { background: #23252c; border: 1px solid #33363e; border-radius: 5px; padding: 5px 10px; }
-QPushButton:hover { background: #2c2f37; }
-QPushButton:disabled { color: #5d6068; }
-QPushButton#transport { min-width: 30px; font-size: 13px; }
-QPushButton#transport:checked { background: #f5a524; color: #111; border-color: #f5a524; }
-QPushButton#small { padding: 2px 0; min-width: 24px; max-width: 24px; font-size: 11px; font-weight: 600; }
-QPushButton#small:checked[role="mute"] { background: #b8433a; border-color: #d9584e; color: #fff; }
-QPushButton#small:checked[role="solo"] { background: #d9a520; border-color: #f5c242; color: #111; }
-QFrame QLabel#grip { background: #263248; border-radius: 4px; padding: 3px 7px; color: #cfe0ff; }
-QFrame QLabel#grip:hover { background: #33456a; }
-QFrame QLabel#grip:disabled { background: #1f232c; color: #555; }
-QFrame QLabel#db { font-family: Menlo, Consolas, monospace; background: #1d1f25; border: 1px solid #2a2c34;
-            border-radius: 4px; padding: 2px 4px; min-width: 56px; }
-QComboBox { background: #1d1f25; border: 1px solid #2a2c34; border-radius: 5px; padding: 4px 8px; }
-QSlider::groove:horizontal { height: 4px; background: #2a2c34; border-radius: 2px; }
-QSlider::handle:horizontal { width: 12px; height: 12px; margin: -5px 0; border-radius: 6px; background: #e6e7ea; }
+STYLE = f"""
+QWidget {{ background: {BG}; color: {TEXT}; font-family: "{FONT_FAMILY}"; font-size: 15px; font-weight: 500; }}
+QToolTip {{ background: {RAISED2}; color: {TEXT}; border: 1px solid {LINE}; }}
+QFrame#topbar {{ background: {BG}; }}
+QFrame#panel {{ background: {SURFACE}; border-radius: 12px; }}
+QFrame#panel QLabel, QFrame#topbar QLabel, QFrame#strip QLabel {{ background: transparent; }}
+QFrame#strip {{ background: transparent; }}
+QLabel#section {{ color: {MUTED}; font-size: 12px; font-weight: 600; letter-spacing: 1.5px; }}
+QLabel#muted {{ color: {MUTED}; background: transparent; }}
+QLabel#time {{ color: {TEXT}; }}
+QLabel#file {{ color: {TEXT}; }}
+QPushButton {{ background: {RAISED}; border: none; border-radius: 6px; padding: 6px 12px; color: {TEXT}; }}
+QPushButton:hover {{ background: {RAISED2}; }}
+QPushButton:pressed {{ background: #1A1918; }}
+QPushButton:disabled {{ color: #5b5955; background: #1d1c1b; }}
+QPushButton:focus {{ outline: none; }}
+QPushButton#primary {{ background: {ACCENT}; color: #141414; font-weight: 700; letter-spacing: 1px; padding: 6px 16px; }}
+QPushButton#primary:hover {{ background: #EC6636; }}
+QPushButton#primary:disabled {{ background: #4a2a1e; color: #8a6a5e; }}
+QPushButton#transport {{ min-width: 38px; max-width: 38px; padding: 6px 0; }}
+QPushButton#transport:checked {{ border: 1px solid {ACCENT}; color: {ACCENT}; }}
+QPushButton#small {{ padding: 2px 0; min-width: 26px; max-width: 26px; font-weight: 700; }}
+QPushButton#small:checked {{ border: 1px solid {ACCENT}; color: {ACCENT}; background: {RAISED}; }}
+QPushButton#segment {{ border-radius: 0; padding: 5px 0; }}
+QPushButton#segment:checked {{ border: 1px solid {ACCENT}; color: {ACCENT}; }}
+QPushButton#segleft {{ border-top-left-radius: 6px; border-bottom-left-radius: 6px; }}
+QFrame QLabel#grip {{ background: {RAISED}; border-radius: 6px; padding: 4px 10px; color: {TEXT}; }}
+QFrame QLabel#grip:hover {{ background: {RAISED2}; }}
+QFrame QLabel#grip:disabled {{ color: #5b5955; background: #1d1c1b; }}
+QFrame QLabel#db {{ color: {TEXT}; background: {RAISED}; border-radius: 6px; padding: 2px 4px; }}
+QComboBox {{ background: {RAISED}; border: none; border-radius: 6px; padding: 5px 10px; }}
+QComboBox QAbstractItemView {{ background: {RAISED2}; selection-background-color: {RAISED}; selection-color: {ACCENT}; }}
+QSlider::groove:horizontal {{ height: 4px; background: {LINE}; border-radius: 2px; }}
+QSlider::sub-page:horizontal {{ background: {MUTED}; border-radius: 2px; }}
+QSlider::handle:horizontal {{ width: 12px; height: 12px; margin: -4px 0; border-radius: 6px; background: {TEXT}; }}
+QSlider::handle:horizontal:hover {{ background: {ACCENT}; }}
+QMessageBox QPushButton {{ min-width: 90px; }}
 """
+
+
+def tabular_font(size: int = 15) -> QFont:
+    """Digits with fixed width so time and dB values never jump."""
+    f = QFont(FONT_FAMILY, size, QFont.Medium)
+    try:
+        from PySide6.QtGui import QFont as _QF
+
+        f.setFeature(_QF.Tag("tnum"), 1)
+    except Exception:
+        f = QFont("Menlo" if sys.platform == "darwin" else "Consolas", size - 3)
+    return f
+
+
+def load_fonts() -> None:
+    from PySide6.QtGui import QFontDatabase
+
+    folder = Path(__file__).parent / "fonts"
+    for f in folder.glob("*.ttf"):
+        QFontDatabase.addApplicationFont(str(f))
 
 
 def db_to_gain(db: float) -> float:
@@ -87,7 +124,7 @@ def db_to_gain(db: float) -> float:
 
 def fmt_time(seconds: float) -> str:
     m, s = divmod(max(seconds, 0.0), 60)
-    return f"{int(m):02d}:{s:06.3f}"
+    return f"{int(m)}:{s:04.1f}"
 
 
 # --------------------------------------------------------------------------- audio
@@ -233,13 +270,42 @@ class DragGrip(QLabel):
             start_file_drag(self, path)
 
 
+class Logo(QWidget):
+    """Tool name in lower case with the orange dot at the top right of the n."""
+
+    def __init__(self, text: str = "stemn") -> None:
+        super().__init__()
+        self.text = text
+        self.font_ = QFont(FONT_FAMILY, 22, QFont.Bold)
+        from PySide6.QtGui import QFontMetrics
+
+        fm = QFontMetrics(self.font_)
+        self._w = fm.horizontalAdvance(text)
+        self.setFixedSize(self._w + 12, fm.height())
+
+    def paintEvent(self, _e):
+        from PySide6.QtGui import QFontMetrics
+
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setFont(self.font_)
+        fm = QFontMetrics(self.font_)
+        p.setPen(QColor(TEXT))
+        p.drawText(QPointF(0, fm.ascent()), self.text)
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor(ACCENT))
+        # free-standing, top right of the final n, roughly at ascender height
+        p.drawEllipse(QPointF(self._w + 4.5, fm.ascent() - fm.capHeight() + 3.5), 3.2, 3.2)
+
+
 class Meter(QWidget):
     """Horizontal output level meter (-60 … 0 dBFS)."""
 
     def __init__(self) -> None:
         super().__init__()
         self.level = 0.0
-        self.setFixedSize(150, 10)
+        self.setFixedSize(140, 6)
+        self.setToolTip("Ausgangspegel")
 
     def set_peak(self, peak: float) -> None:
         db = 20 * np.log10(max(peak, 1e-6))
@@ -251,12 +317,13 @@ class Meter(QWidget):
     def paintEvent(self, _e):
         p = QPainter(self)
         r = self.rect()
-        p.fillRect(r, QColor("#23252c"))
-        grad = QLinearGradient(0, 0, r.width(), 0)
-        grad.setColorAt(0.0, QColor("#3ddc84"))
-        grad.setColorAt(0.8, QColor("#f5d142"))
-        grad.setColorAt(1.0, QColor("#ff5a4a"))
-        p.fillRect(QRectF(0, 0, r.width() * self.level, r.height()), grad)
+        p.setRenderHint(QPainter.Antialiasing)
+        path = QPainterPath()
+        path.addRoundedRect(QRectF(r), 3, 3)
+        p.setClipPath(path)
+        p.fillRect(r, QColor(RAISED))
+        color = QColor(DANGER) if self.level > 0.98 else QColor(MUTED)
+        p.fillRect(QRectF(0, 0, r.width() * self.level, r.height()), color)
 
 
 class StemStrip(QFrame):
@@ -266,53 +333,45 @@ class StemStrip(QFrame):
 
     def __init__(self, stem: str, path: Path) -> None:
         super().__init__()
+        self.setObjectName("strip")
         self.stem, self.path = stem, path
-        color = STEM_COLORS.get(stem, "#cccccc")
-        lay = QVBoxLayout(self)
-        lay.setContentsMargins(0, 4, 0, 4)
-        lay.setSpacing(2)
+        color = STEM_COLORS.get(stem, MUTED)
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(0, 2, 0, 2)
+        lay.setSpacing(6)
 
-        head = QHBoxLayout()
         dot = QLabel("●")
-        dot.setStyleSheet(f"color:{color}; font-size:13px;")
+        dot.setStyleSheet(f"color:{color}; font-size:11px;")
+        dot.setFixedWidth(12)
         name = QLabel(STEM_LABELS.get(stem, stem.title()))
         name.setStyleSheet("font-weight:600;")
-        self.hint = QLabel("")
-        self.hint.setObjectName("muted")
-        grip = DragGrip("⠿ ziehen", self._drag_path, "Diese Spur in Ableton ins Arrangement oder auf eine Spur ziehen")
-        head.addWidget(dot)
-        head.addWidget(name)
-        head.addWidget(self.hint, 1)
-        head.addWidget(grip)
-        lay.addLayout(head)
-
-        row = QHBoxLayout()
+        name.setFixedWidth(52)
+        self.hint = name  # "fast leer" is shown via a dimmed name + tooltip
         self.fader = QSlider(Qt.Horizontal)
         self.fader.setRange(int(GAIN_MIN_DB * 10), int(GAIN_MAX_DB * 10))
         self.fader.setValue(0)
-        self.fader.setStyleSheet(
-            f"QSlider::sub-page:horizontal {{ background:{color}; border-radius:2px; }}"
-            f"QSlider::handle:horizontal {{ background:{color}; }}"
-        )
-        self.fader.setToolTip("Lautstärke (Doppelklick auf den dB-Wert setzt 0 dB)")
+        self.fader.setToolTip("Lautstärke · Doppelklick auf den Wert setzt 0 dB")
         self.db = QLabel("+0.0 dB")
         self.db.setObjectName("db")
         self.db.setAlignment(Qt.AlignCenter)
+        self.db.setFixedWidth(62)  # longest value "-30.0 dB" fits, nothing jumps
+        self.db.setFont(tabular_font(14))
         self.solo = QPushButton("S")
         self.solo.setObjectName("small")
-        self.solo.setProperty("role", "solo")
         self.solo.setCheckable(True)
         self.solo.setToolTip("Solo")
         self.mute = QPushButton("M")
         self.mute.setObjectName("small")
-        self.mute.setProperty("role", "mute")
         self.mute.setCheckable(True)
         self.mute.setToolTip("Stumm")
-        row.addWidget(self.fader, 1)
-        row.addWidget(self.db)
-        row.addWidget(self.solo)
-        row.addWidget(self.mute)
-        lay.addLayout(row)
+        grip = DragGrip("⠿", self._drag_path, "Ziehen: diese Spur in Ableton ins Arrangement oder auf eine Spur ablegen")
+        grip.setFixedWidth(28)
+        grip.setAlignment(Qt.AlignCenter)
+        for w in (dot, name):
+            lay.addWidget(w)
+        lay.addWidget(self.fader, 1)
+        for w in (self.db, self.solo, self.mute, grip):
+            lay.addWidget(w)
 
         self.fader.valueChanged.connect(self._on_fader)
         self.solo.toggled.connect(self._on_toggled)
@@ -323,7 +382,8 @@ class StemStrip(QFrame):
             audio, _ = sf.read(str(path), dtype="float32")
             peak = float(np.abs(audio).max()) if audio.size else 0.0
             if 20 * np.log10(max(peak, 1e-9)) < -35:
-                self.hint.setText("fast leer")
+                self.hint.setStyleSheet(f"font-weight:600; color:{MUTED};")
+                self.hint.setToolTip("Fast leer: in diesem Loop kommt das Instrument kaum vor")
         except Exception:
             pass
 
@@ -370,7 +430,7 @@ class WaveformView(QWidget):
         self.active: set[str] = set()
         self.position = 0.0
         self.duration = 0.0
-        self.message = "Drum-Loop hier reinziehen\noder oben auf „Import“ klicken"
+        self.message = "Drum-Loop hierher ziehen\noder oben auf „Öffnen“ klicken"
         self._hover = False
         self._paths: dict[str, QPainterPath] = {}
         self._paths_size = None
@@ -425,7 +485,10 @@ class WaveformView(QWidget):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
         r = self.rect()
-        p.fillRect(r, QColor("#0b0c0f"))
+        bg = QPainterPath()
+        bg.addRoundedRect(QRectF(r), 12, 12)
+        p.setClipPath(bg)
+        p.fillRect(r, QColor(SURFACE))
         mid = r.height() / 2
 
         if self.duration > 0:  # time grid
@@ -433,23 +496,22 @@ class WaveformView(QWidget):
             t = step
             while t < self.duration:
                 x = r.width() * t / self.duration
-                p.setPen(QPen(QColor("#1c1e24"), 1))
+                p.setPen(QPen(QColor(LINE), 1))
                 p.drawLine(QPointF(x, 0), QPointF(x, r.height()))
-                p.setPen(QColor("#4a4d55"))
+                p.setPen(QColor(MUTED))
                 p.drawText(QPointF(x + 3, 12), f"{t:g}s")
                 t += step
-        p.setPen(QPen(QColor("#22242b"), 1))
+        p.setPen(QPen(QColor(LINE), 1))
         p.drawLine(QPointF(0, mid), QPointF(r.width(), mid))
 
         if self._hover:
-            p.fillRect(r.adjusted(4, 4, -4, -4), QColor(245, 165, 36, 25))
-            p.setPen(QPen(QColor("#f5a524"), 2, Qt.DashLine))
+            p.fillRect(r.adjusted(4, 4, -4, -4), QColor(255, 90, 31, 18))
+            p.setPen(QPen(QColor(ACCENT), 2, Qt.DashLine))
             p.drawRoundedRect(QRectF(r.adjusted(4, 4, -4, -4)), 8, 8)
 
         if self.message:
-            p.setPen(QColor("#8a8d95"))
-            f = QFont(self.font())
-            f.setPointSize(15)
+            p.setPen(QColor(MUTED))
+            f = QFont(FONT_FAMILY, 17, QFont.Medium)
             p.setFont(f)
             p.drawText(r, Qt.AlignCenter, self.message)
             return
@@ -457,17 +519,18 @@ class WaveformView(QWidget):
         if self._paths_size != (r.width(), r.height()):
             self._build_paths()
         for stem in self.draw_order:
-            color = QColor(STEM_COLORS.get(stem, "#cccccc"))
+            color = QColor(STEM_COLORS.get(stem, MUTED))
             if stem in self.active:
-                color.setAlpha(205)
+                color.setAlpha(215)
             else:
-                color = QColor(58, 60, 68, 90)
+                color = QColor(50, 49, 47, 160)
             p.fillPath(self._paths[stem], color)
 
         x = self.position * r.width()  # playhead
-        p.setPen(QPen(QColor("#ffffff"), 1.5))
+        p.setPen(QPen(QColor(ACCENT), 1.5))
         p.drawLine(QPointF(x, 0), QPointF(x, r.height()))
-        p.setBrush(QColor("#ffffff"))
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor(ACCENT))
         p.drawEllipse(QPointF(x, 6), 4, 4)
 
     # interaction
@@ -505,6 +568,46 @@ class WaveformView(QWidget):
             self.dropped.emit(p)
 
 
+class SegmentSwitch(QWidget):
+    """2-4 options side by side; the active one is outlined in orange."""
+
+    def __init__(self, options: list[tuple[str, str]], default: str) -> None:
+        super().__init__()
+        from PySide6.QtWidgets import QButtonGroup
+
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(2)
+        self.group = QButtonGroup(self)
+        self.group.setExclusive(True)
+        self._values = {}
+        for i, (label, value) in enumerate(options):
+            b = QPushButton(label)
+            b.setObjectName("segment")
+            b.setCheckable(True)
+            radius = "6px"
+            corners = []
+            if i == 0:
+                corners += [f"border-top-left-radius:{radius}", f"border-bottom-left-radius:{radius}"]
+            if i == len(options) - 1:
+                corners += [f"border-top-right-radius:{radius}", f"border-bottom-right-radius:{radius}"]
+            if corners:
+                b.setStyleSheet("QPushButton#segment {" + ";".join(corners) + "}")
+            self.group.addButton(b, i)
+            self._values[i] = value
+            lay.addWidget(b, 1)
+            if value == default:
+                b.setChecked(True)
+
+    def currentData(self) -> str:
+        return self._values.get(self.group.checkedId(), next(iter(self._values.values())))
+
+    def setCurrentData(self, value: str) -> None:
+        for i, v in self._values.items():
+            if v == value:
+                self.group.button(i).setChecked(True)
+
+
 # --------------------------------------------------------------------------- window
 
 
@@ -529,16 +632,18 @@ class MainWindow(QMainWindow):
         outer.addWidget(self._build_topbar())
 
         body = QHBoxLayout()
-        body.setContentsMargins(0, 0, 0, 0)
-        body.setSpacing(0)
+        body.setContentsMargins(12, 6, 12, 12)
+        body.setSpacing(12)
         wave_box = QVBoxLayout()
-        wave_box.setContentsMargins(10, 10, 10, 10)
+        wave_box.setContentsMargins(0, 0, 0, 0)
+        wave_box.setSpacing(8)
         self.wave = WaveformView()
         self.wave.dropped.connect(self.start)
         self.wave.seek.connect(self.on_seek)
         wave_box.addWidget(self.wave)
-        self.status = QLabel("")
+        self.status = QLabel("Drum-Loop hierher ziehen, am besten eine reine Drum-Spur")
         self.status.setObjectName("muted")
+        self.status.setWordWrap(True)
         wave_box.addWidget(self.status)
         body.addLayout(wave_box, 1)
         body.addWidget(self._build_panel())
@@ -559,15 +664,15 @@ class MainWindow(QMainWindow):
         bar = QFrame()
         bar.setObjectName("topbar")
         lay = QHBoxLayout(bar)
-        lay.setContentsMargins(14, 8, 14, 8)
-        lay.setSpacing(10)
-        logo = QLabel("STEMN")
-        logo.setObjectName("logo")
-        lay.addWidget(logo)
-        lay.addSpacing(16)
+        lay.setContentsMargins(16, 10, 16, 6)
+        lay.setSpacing(8)
+        lay.addWidget(Logo("stemn"))
+        lay.addSpacing(24)
 
-        self.time = QLabel("00:00.000 / 00:00.000")
+        self.time = QLabel("0:00.0 / 0:00.0")
         self.time.setObjectName("time")
+        self.time.setFont(tabular_font())
+        self.time.setFixedWidth(120)
         lay.addWidget(self.time)
 
         self.to_start_btn = QPushButton("⏮")
@@ -577,67 +682,78 @@ class MainWindow(QMainWindow):
         self.play_btn = QPushButton("▶")
         self.play_btn.setObjectName("transport")
         self.play_btn.setCheckable(True)
-        self.play_btn.setToolTip("Abspielen / Pause (Leertaste)")
+        self.play_btn.setToolTip("Abspielen / Pause · Leertaste")
         self.play_btn.setShortcut(Qt.Key_Space)
         self.play_btn.clicked.connect(self.toggle_play)
         lay.addWidget(self.to_start_btn)
         lay.addWidget(self.play_btn)
-        lay.addSpacing(8)
+        lay.addSpacing(12)
         self.meter = Meter()
         lay.addWidget(self.meter)
         lay.addStretch(1)
 
-        self.import_btn = QPushButton("Import")
-        self.import_btn.setToolTip("Loop öffnen (oder einfach in die Wellenform ziehen)")
+        self.import_btn = QPushButton("Öffnen")
+        self.import_btn.setToolTip("Loop öffnen · ⌘O (oder in die Wellenform ziehen)")
+        self.import_btn.setShortcut("Ctrl+O")
         self.import_btn.clicked.connect(self.choose_file)
-        self.export_btn = QPushButton("Export")
-        self.export_btn.setToolTip("Hörbaren Mix mit den eingestellten Pegeln als WAV speichern")
-        self.export_btn.clicked.connect(self.export_dialog)
         self.folder_btn = QPushButton("Ordner")
         self.folder_btn.setToolTip("Ordner mit allen Spuren öffnen")
         self.folder_btn.clicked.connect(self.open_folder)
-        self.mix_grip = DragGrip("⠿  Mix ziehen", self.export_mix, "Hörbaren Mix direkt in Ableton ziehen")
-        for w in (self.import_btn, self.export_btn, self.folder_btn, self.mix_grip):
+        self.mix_grip = DragGrip("⠿ Mix ziehen", self.export_mix, "Alle hörbaren Spuren als eine Datei in Ableton ziehen")
+        self.export_btn = QPushButton("EXPORTIEREN")
+        self.export_btn.setObjectName("primary")
+        self.export_btn.setToolTip("Hörbaren Mix mit den eingestellten Pegeln als WAV speichern · ⌘E")
+        self.export_btn.setShortcut("Ctrl+E")
+        self.export_btn.clicked.connect(self.export_dialog)
+        for w in (self.import_btn, self.folder_btn, self.mix_grip, self.export_btn):
             lay.addWidget(w)
         return bar
 
     def _build_panel(self) -> QFrame:
         panel = QFrame()
         panel.setObjectName("panel")
-        panel.setFixedWidth(320)
+        panel.setFixedWidth(330)
         lay = QVBoxLayout(panel)
-        lay.setContentsMargins(14, 12, 14, 12)
+        lay.setContentsMargins(16, 16, 16, 12)
         lay.setSpacing(8)
 
-        self.file_label = QLabel("Keine Datei")
+        lay.addWidget(self._caption("DATEI"))
+        self.file_label = QLabel("Noch keine")
         self.file_label.setObjectName("file")
         self.file_label.setWordWrap(True)
         lay.addWidget(self.file_label)
+        lay.addSpacing(8)
 
-        lay.addWidget(self._caption("Modell"))
+        lay.addWidget(self._caption("MODELL"))
         self.model_box = QComboBox()
         for m in discover_models().values():
             if m.is_available():
                 self.model_box.addItem(m.name, m.id)
         lay.addWidget(self.model_box)
-        lay.addWidget(self._caption("Qualität"))
-        self.quality_box = QComboBox()
-        for label, value in QUALITIES:
-            self.quality_box.addItem(label, value)
-        lay.addWidget(self.quality_box)
-        lay.addSpacing(6)
-        lay.addWidget(self._caption("Spuren"))
+        lay.addSpacing(8)
 
+        lay.addWidget(self._caption("QUALITÄT"))
+        self.quality_box = SegmentSwitch(QUALITIES, default="normal")
+        lay.addWidget(self.quality_box)
+        lay.addSpacing(8)
+
+        lay.addWidget(self._caption("SPUREN"))
         self.rows_box = QVBoxLayout()
-        self.rows_box.setSpacing(2)
+        self.rows_box.setSpacing(4)
         lay.addLayout(self.rows_box)
+        self.empty_rows = QLabel("Noch keine")
+        self.empty_rows.setObjectName("muted")
+        self.rows_box.addWidget(self.empty_rows)
         lay.addStretch(1)
+        version = QLabel(f"VERSION {__version__}")
+        version.setObjectName("section")
+        lay.addWidget(version)
         return panel
 
     @staticmethod
     def _caption(text: str) -> QLabel:
         lbl = QLabel(text)
-        lbl.setObjectName("muted")
+        lbl.setObjectName("section")
         return lbl
 
     def _set_loaded(self, loaded: bool) -> None:
@@ -660,7 +776,7 @@ class MainWindow(QMainWindow):
         self.clear_rows()
         self.file_label.setText(path.name)
         self.wave.clear("Trenne Spuren …")
-        self.status.setText("Das dauert je nach Rechner einige Sekunden.")
+        self.status.setText("Das dauert je nach Rechner ein paar Sekunden.")
         self.import_btn.setEnabled(False)
 
         self._thread = QThread(self)
@@ -685,6 +801,7 @@ class MainWindow(QMainWindow):
 
     def on_done(self, stems: dict) -> None:
         self.stems = {k: Path(v) for k, v in stems.items()}
+        self.empty_rows.hide()
         for stem in sorted(self.stems, key=lambda s: STEM_ORDER.index(s) if s in STEM_ORDER else 99):
             row = StemStrip(stem, self.stems[stem])
             row.changed.connect(self.update_gains)
@@ -694,7 +811,7 @@ class MainWindow(QMainWindow):
         self.wave.set_stems(self.stems)
         self._set_loaded(True)
         folder = next(iter(self.stems.values())).parent
-        self.status.setText(f"Fertig. Spuren liegen in „{folder.name}“. Neuen Loop reinziehen zum Ersetzen.")
+        self.status.setText("Spur am ⠿ nach Ableton ziehen · Klick in die Wellenform setzt die Position")
         if self.source:
             self.file_label.setText(self.source.name)
         self.update_gains()
@@ -705,6 +822,7 @@ class MainWindow(QMainWindow):
             row.deleteLater()
         self.rows = []
         self.stems = {}
+        self.empty_rows.show()
         self._set_loaded(False)
 
     # ---- mixing / playback
@@ -749,7 +867,7 @@ class MainWindow(QMainWindow):
         length = self.player.length
         self.meter.set_peak(self.player.peak if self.player.playing else 0.0)
         if not length:
-            self.time.setText("00:00.000 / 00:00.000")
+            self.time.setText("0:00.0 / 0:00.0")
             return
         pos = self.player.pos
         if pos == self._last_pos:
@@ -823,6 +941,7 @@ def _background_update() -> None:
 def main(argv: list[str] | None = None) -> int:
     app = QApplication.instance() or QApplication(sys.argv if argv is None else argv)
     app.setApplicationName("stemn")
+    load_fonts()
     app.setStyleSheet(STYLE)
     win = MainWindow()
     win.show()
