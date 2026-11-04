@@ -316,6 +316,42 @@ class DragGrip(QLabel):
             start_file_drag(self, path)
 
 
+class StemGrip(DragGrip):
+    """Clearly visible handle on every stem row: a small field with a dot grid.
+
+    Grab it and drop it into Ableton (or Finder/Explorer): only this one stem moves.
+    """
+
+    def __init__(self, color: str, path_provider, tooltip: str) -> None:
+        super().__init__("", path_provider, tooltip)
+        self.setObjectName("stemgrip")
+        self.color = QColor(color)
+        self._hover = False
+        self.setFixedSize(34, 28)
+
+    def enterEvent(self, e):
+        self._hover = True
+        self.update()
+
+    def leaveEvent(self, e):
+        self._hover = False
+        self.update()
+
+    def paintEvent(self, _e):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        r = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+        p.setPen(QPen(QColor(TEXT if self._hover else LINE), 1))
+        p.setBrush(QColor(RAISED2 if self._hover else RAISED))
+        p.drawRoundedRect(r, 6, 6)
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor(TEXT) if self._hover else self.color)
+        cx, cy = r.center().x(), r.center().y()
+        for dx in (-3.5, 3.5):
+            for dy in (-6, 0, 6):
+                p.drawEllipse(QPointF(cx + dx, cy + dy), 1.7, 1.7)
+
+
 class Logo(QWidget):
     """Tool name in lower case with the orange dot at the top right of the n."""
 
@@ -410,9 +446,8 @@ class StemStrip(QFrame):
         self.mute.setObjectName("small")
         self.mute.setCheckable(True)
         self.mute.setToolTip("Stumm")
-        grip = DragGrip("⠿", self._drag_path, "Ziehen: diese Spur in Ableton ins Arrangement oder auf eine Spur ablegen")
-        grip.setFixedWidth(28)
-        grip.setAlignment(Qt.AlignCenter)
+        grip = StemGrip(color, self._drag_path, "Greifen und ziehen: nur diese Spur in Ableton ablegen (Arrangement oder Spur)")
+        self.grip = grip
         for w in (dot, name):
             lay.addWidget(w)
         lay.addWidget(self.fader, 1)
@@ -429,6 +464,7 @@ class StemStrip(QFrame):
             peak = float(np.abs(audio).max()) if audio.size else 0.0
             if 20 * np.log10(max(peak, 1e-9)) < -35:
                 self.hint.setStyleSheet(f"font-weight:600; color:{MUTED};")
+                dot.setStyleSheet(f"color:{LINE}; font-size:11px;")
                 self.hint.setToolTip("Fast leer: in diesem Loop kommt das Instrument kaum vor")
         except Exception:
             pass
@@ -758,7 +794,7 @@ class MainWindow(QMainWindow):
     def _build_panel(self) -> QFrame:
         panel = QFrame()
         panel.setObjectName("panel")
-        panel.setFixedWidth(330)
+        panel.setFixedWidth(360)
         lay = QVBoxLayout(panel)
         lay.setContentsMargins(16, 16, 16, 12)
         lay.setSpacing(8)
@@ -857,7 +893,7 @@ class MainWindow(QMainWindow):
         self.wave.set_stems(self.stems)
         self._set_loaded(True)
         folder = next(iter(self.stems.values())).parent
-        self.status.setText("Spur am ⠿ nach Ableton ziehen · Klick in die Wellenform setzt die Position")
+        self.status.setText("Spur am Griff rechts greifen und nach Ableton ziehen · Klick in die Wellenform setzt die Position")
         if self.source:
             self.file_label.setText(self.source.name)
         self.update_gains()
@@ -989,6 +1025,11 @@ def main(argv: list[str] | None = None) -> int:
     app.setApplicationName("stemn")
     load_fonts()
     app.setStyleSheet(STYLE)
+    icon = Path(__file__).parent / "assets" / "stemn.png"
+    if icon.is_file():
+        from PySide6.QtGui import QIcon
+
+        app.setWindowIcon(QIcon(str(icon)))
     win = MainWindow()
     win.show()
     threading.Thread(target=_background_update, daemon=True).start()

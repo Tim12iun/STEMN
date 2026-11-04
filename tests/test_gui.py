@@ -105,3 +105,9 @@ def test_fader_minimum_is_silent(window):
     window.rows[0].fader.setValue(window.rows[0].fader.minimum())
     assert window.current_gains()["kick"] == 0.0
     assert "kick" not in window.wave.active
+
+
+def test_every_stem_row_has_its_own_grip(window):
+    assert window.rows
+    for strip in window.rows:
+        assert strip.grip._path_provider() == strip.path

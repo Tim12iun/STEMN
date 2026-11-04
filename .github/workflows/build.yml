@@ -54,12 +54,14 @@ jobs:
         run: >
           pyinstaller --noconfirm --clean --windowed --name stemn
           --osx-bundle-identifier de.stemn.app
+          --icon "src/stemn/assets/stemn.${{ runner.os == 'Windows' && 'ico' || 'icns' }}"
           --collect-all audio_separator
           --hidden-import stemn._build_token
           --collect-data librosa
           --copy-metadata audio-separator
           --add-data "models${{ runner.os == 'Windows' && ';' || ':' }}models"
           --add-data "src/stemn/fonts${{ runner.os == 'Windows' && ';' || ':' }}stemn/fonts"
+          --add-data "src/stemn/assets${{ runner.os == 'Windows' && ';' || ':' }}stemn/assets"
           scripts/stemn_entry.py
       - name: Mac-App Version eintragen und neu signieren
         if: runner.os == 'macOS'
