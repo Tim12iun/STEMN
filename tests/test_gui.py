@@ -187,3 +187,47 @@ def test_separate_stays_visible_and_glows_only_when_needed(window):
     assert window.separate_btn.property("lit") is True and window.export_btn.property("lit") is False
     window.bleed_switch.group.button(0).click()  # back to what the stems were made with
     assert window.separate_btn.property("lit") is False
+
+
+def test_master_volume_scales_playback_only(window):
+    import numpy as np
+
+    out = np.zeros((256, 2), np.float32)
+    window.player._callback(out, 256, None, None)
+    loud = np.abs(out).max()
+    window.volume.setValue(-20)
+    window.player._callback(out, 256, None, None)
+    assert np.abs(out).max() == pytest.approx(loud * 0.1, rel=1e-3)
+    assert all(g == 1.0 for g in window.player.gains.values())  # export levels untouched
+    window.volume.setValue(-40)
+    window.player._callback(out, 256, None, None)
+    assert not out.any()
+
+
+def test_nothing_moves_when_clicking(window, app):
+    """loomn: no click changes the size or place of anything on screen."""
+    from PySide6.QtWidgets import QWidget
+
+    window.resize(1240, 640)
+    window.show()
+    app.processEvents()
+
+    def snapshot():
+        app.processEvents()
+        return {id(w): (w.objectName(), w.geometry().getRect()) for w in window.findChildren(QWidget) if w.isVisible()}
+
+    before = snapshot()
+    actions = [
+        lambda: (window.play_btn.setChecked(True), window.play_btn.setText("❚❚")),
+        lambda: (window.play_btn.setChecked(False), window.play_btn.setText("▶")),
+        lambda: window.toggle_solo("kick"),
+        lambda: window.toggle_solo("kick"),
+        lambda: window.toggle_stem("snare"),
+        lambda: window.bleed_switch.group.button(2).click(),
+        lambda: window.restore_btn.setChecked(not window.restore_btn.isChecked()),
+    ]
+    for act in actions:
+        act()
+        after = snapshot()
+        moved = [before[k] for k in before if k in after and after[k][1] != before[k][1]]
+        assert not moved, moved

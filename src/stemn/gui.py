@@ -71,25 +71,25 @@ QLabel#section {{ color: {MUTED}; font-size: 12px; font-weight: 600; letter-spac
 QLabel#muted {{ color: {MUTED}; background: transparent; }}
 QLabel#time {{ color: {TEXT}; }}
 QLabel#file {{ color: {TEXT}; }}
-QPushButton {{ background: {RAISED}; border: none; border-radius: 6px; padding: 6px 12px; color: {TEXT}; }}
+QPushButton {{ background: {RAISED}; border: 1px solid transparent; border-radius: 6px; padding: 5px 11px; color: {TEXT}; }}
 QPushButton:hover {{ background: {RAISED2}; }}
 QPushButton:pressed {{ background: #1A1918; }}
 QPushButton:disabled {{ color: #5b5955; background: #1d1c1b; }}
 QPushButton:focus {{ outline: none; }}
-QPushButton#primary {{ background: {ACCENT}; color: #141414; font-weight: 700; letter-spacing: 1px; padding: 6px 16px; }}
+QPushButton#primary {{ background: {ACCENT}; color: #141414; font-weight: 700; letter-spacing: 1px; padding: 5px 15px; }}
 QPushButton#primary:hover {{ background: #EC6636; }}
 QPushButton#primary:disabled {{ background: #4a2a1e; color: #8a6a5e; }}
 QPushButton#primary[lit="false"] {{ background: {RAISED2}; color: {TEXT}; }}
 QPushButton#primary[lit="false"]:hover {{ background: {LINE}; }}
 QPushButton#primary[lit="false"]:disabled {{ background: {RAISED}; color: {MUTED}; }}
-QPushButton#icon {{ font-size: 17px; padding: 3px 0; }}
-QPushButton#transport {{ min-width: 38px; max-width: 38px; padding: 6px 0; }}
+QPushButton#icon {{ font-size: 17px; padding: 2px 0; }}
+QPushButton#transport {{ min-width: 38px; max-width: 38px; padding: 5px 0; }}
 QPushButton#transport:checked {{ border: 1px solid {ACCENT}; color: {ACCENT}; }}
-QPushButton#small {{ padding: 2px 0; min-width: 26px; max-width: 26px; font-weight: 700; }}
+QPushButton#small {{ padding: 1px 0; min-width: 26px; max-width: 26px; font-weight: 700; }}
 QPushButton#small:checked {{ border: 1px solid {ACCENT}; color: {ACCENT}; background: {RAISED}; }}
-QPushButton#toggle {{ text-align: left; padding: 5px 10px; border: 1px solid transparent; }}
+QPushButton#toggle {{ text-align: left; padding: 4px 9px; }}
 QPushButton#toggle:checked {{ border: 1px solid {ACCENT}; color: {ACCENT}; }}
-QPushButton#segment {{ border-radius: 0; padding: 5px 0; }}
+QPushButton#segment {{ border-radius: 0; padding: 4px 0; }}
 QPushButton#segment:checked {{ border: 1px solid {ACCENT}; color: {ACCENT}; }}
 QPushButton#segleft {{ border-top-left-radius: 6px; border-bottom-left-radius: 6px; }}
 QFrame QLabel#grip {{ background: {RAISED}; border-radius: 6px; padding: 4px 10px; color: {TEXT}; }}
@@ -157,6 +157,7 @@ class Player:
         self.pos = 0
         self.length = 0
         self.peak = 0.0
+        self.volume = 1.0  # master volume for listening only; exports are not affected
         self.stream = None
         self.error: str | None = None
         self._running = False  # a test harness may call _callback without a device
@@ -221,6 +222,8 @@ class Player:
                 written += n
                 pos = (pos + n) % length
             self.pos = pos
+        if self.volume != 1.0:
+            out *= self.volume
         self.peak = max(self.peak * 0.85, float(np.abs(out).max()) if frames else 0.0)
 
     @property
@@ -499,7 +502,7 @@ class Meter(QWidget):
     def __init__(self) -> None:
         super().__init__()
         self.level = 0.0
-        self.setFixedSize(140, 6)
+        self.setFixedSize(90, 6)
         self.setToolTip("Ausgangspegel")
 
     def set_peak(self, peak: float) -> None:
@@ -926,7 +929,7 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle(f"stemn {__version__}")
-        self.resize(1120, 560)
+        self.resize(1240, 560)
         self.setMinimumSize(860, 420)
         self.player = Player()
         self.rows: list[StemStrip] = []
@@ -944,7 +947,8 @@ class MainWindow(QMainWindow):
         outer = QVBoxLayout(root)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
-        outer.addWidget(self._build_topbar())
+        topbar = self._build_topbar()
+        outer.addWidget(topbar)
 
         body = QHBoxLayout()
         body.setContentsMargins(12, 6, 12, 12)
@@ -969,6 +973,8 @@ class MainWindow(QMainWindow):
         self.timer.timeout.connect(self.tick)
         self.timer.start()
         self._set_loaded(False)
+        # the top bar never gets squeezed: buttons would overlap
+        self.setMinimumWidth(max(self.minimumWidth(), topbar.minimumSizeHint().width()))
         self._no_focus()
 
         if self.model_box.count() == 0:
@@ -1010,6 +1016,19 @@ class MainWindow(QMainWindow):
         lay.addSpacing(12)
         self.meter = Meter()
         lay.addWidget(self.meter)
+        lay.addSpacing(14)
+        vol_label = QLabel("VOL")
+        vol_label.setObjectName("section")
+        lay.addWidget(vol_label)
+        lay.addSpacing(4)
+        self.volume = QSlider(Qt.Horizontal)
+        self.volume.setRange(-40, 6)  # dB
+        self.volume.setValue(0)
+        self.volume.setFixedWidth(80)
+        self.volume.setToolTip("Lautstärke der Wiedergabe: 0 dB (Doppelklick: zurück auf 0 dB) · Export bleibt unverändert")
+        self.volume.valueChanged.connect(self.set_volume)
+        self.volume.mouseDoubleClickEvent = lambda _e: self.volume.setValue(0)
+        lay.addWidget(self.volume)
         lay.addStretch(1)
 
         self.import_btn = QPushButton("Öffnen")
@@ -1047,7 +1066,16 @@ class MainWindow(QMainWindow):
         self.separate_btn.setFixedWidth(self.separate_btn.sizeHint().width())
         self.export_btn.setFixedWidth(self.export_btn.sizeHint().width() + 20)
         self._separated_with = None  # settings of the stems on screen
+        # nothing in the bar may change size when clicked (▶ and ❚❚ come from different fonts)
+        height = max(b.sizeHint().height() for b in bar.findChildren(QPushButton))
+        for b in bar.findChildren(QPushButton):
+            b.setFixedHeight(height)
+        bar.setFixedHeight(bar.sizeHint().height())
         return bar
+
+    def set_volume(self, db: int) -> None:
+        self.player.volume = 0.0 if db <= -40 else float(10 ** (db / 20))
+        self.volume.setToolTip(f"Lautstärke der Wiedergabe: {db:+d} dB (Doppelklick: zurück auf 0 dB) · Export bleibt unverändert")
 
     def _separation_key(self):
         restore = self.restore_btn.isChecked() and not self.restore_btn.isHidden()
