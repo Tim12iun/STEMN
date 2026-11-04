@@ -89,8 +89,6 @@ QPushButton#small {{ padding: 1px 0; min-width: 26px; max-width: 26px; font-weig
 QPushButton#small:checked {{ border: 1px solid {ACCENT}; color: {ACCENT}; background: {RAISED}; }}
 QPushButton#toggle {{ text-align: left; padding: 4px 9px; }}
 QPushButton#toggle:checked {{ border: 1px solid {ACCENT}; color: {ACCENT}; }}
-QPushButton#segment {{ border-radius: 0; padding: 4px 0; }}
-QPushButton#segment:checked {{ border: 1px solid {ACCENT}; color: {ACCENT}; }}
 QPushButton#segleft {{ border-top-left-radius: 6px; border-bottom-left-radius: 6px; }}
 QFrame QLabel#grip {{ background: {RAISED}; border-radius: 6px; padding: 4px 10px; color: {TEXT}; }}
 QFrame QLabel#grip:hover {{ background: {RAISED2}; }}
@@ -882,46 +880,6 @@ class WaveformView(QWidget):
             self.dropped.emit(p)
 
 
-class SegmentSwitch(QWidget):
-    """2-4 options side by side; the active one is outlined in orange."""
-
-    def __init__(self, options: list[tuple[str, str]], default: str) -> None:
-        super().__init__()
-        from PySide6.QtWidgets import QButtonGroup
-
-        lay = QHBoxLayout(self)
-        lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(2)
-        self.group = QButtonGroup(self)
-        self.group.setExclusive(True)
-        self._values = {}
-        for i, (label, value) in enumerate(options):
-            b = QPushButton(label)
-            b.setObjectName("segment")
-            b.setCheckable(True)
-            radius = "6px"
-            corners = []
-            if i == 0:
-                corners += [f"border-top-left-radius:{radius}", f"border-bottom-left-radius:{radius}"]
-            if i == len(options) - 1:
-                corners += [f"border-top-right-radius:{radius}", f"border-bottom-right-radius:{radius}"]
-            if corners:
-                b.setStyleSheet("QPushButton#segment {" + ";".join(corners) + "}")
-            self.group.addButton(b, i)
-            self._values[i] = value
-            lay.addWidget(b, 1)
-            if value == default:
-                b.setChecked(True)
-
-    def currentData(self) -> str:
-        return self._values.get(self.group.checkedId(), next(iter(self._values.values())))
-
-    def setCurrentData(self, value: str) -> None:
-        for i, v in self._values.items():
-            if v == value:
-                self.group.button(i).setChecked(True)
-
-
 # --------------------------------------------------------------------------- window
 
 
@@ -1085,11 +1043,14 @@ class MainWindow(QMainWindow):
 
     def _separation_key(self):
         restore = self.restore_btn.isChecked() and not self.restore_btn.isHidden()
-        return (self.source, self.model_box.currentData(), restore, self.bleed_switch.currentData())
+        return (self.source, self.model_box.currentData(), restore, self._bleed_level())
+
+    def _bleed_level(self) -> str:
+        return "light" if self.clean_btn.isChecked() else "off"
 
     def _update_main_buttons(self) -> None:
         """TRENNEN glows when (re)separating is needed, otherwise EXPORTIEREN glows."""
-        if not hasattr(self, "bleed_switch"):
+        if not hasattr(self, "clean_btn"):
             return  # panel not built yet
         loaded = bool(self.stems)
         needs = self.source is not None and (not loaded or self._separation_key() != self._separated_with)
@@ -1124,13 +1085,16 @@ class MainWindow(QMainWindow):
         lay.addWidget(self.model_box)
         lay.addSpacing(8)
 
-        # damp cross-talk: every stem keeps less of the other drums
+        # damp cross-talk: every stem keeps less of the other drums (one safe level, on by default)
         lay.addWidget(self._caption("ÜBERSPRECHEN"))
-        self.bleed_switch = SegmentSwitch([("Aus", "off"), ("Leicht", "light"), ("Stark", "strong")], "off")
-        self.bleed_switch.setToolTip("Dämpft in jeder Spur, was hörbar zu einer anderen Spur gehört. Stark = trockener, leise Ausklänge können dünner werden.")
-        lay.addWidget(self.bleed_switch)
+        self.clean_btn = QPushButton("Sauber · Übersprechen dämpfen")
+        self.clean_btn.setObjectName("toggle")
+        self.clean_btn.setCheckable(True)
+        self.clean_btn.setChecked(True)
+        self.clean_btn.setToolTip("Dämpft in jeder Spur, was hörbar zu einer anderen Spur gehört. Alle Spuren zusammen klingen weiter wie das Original.")
+        lay.addWidget(self.clean_btn)
         lay.addSpacing(8)
-        self.bleed_switch.group.buttonClicked.connect(lambda _b: self._update_main_buttons())
+        self.clean_btn.toggled.connect(lambda _on: self._update_main_buttons())
         self.model_box.currentIndexChanged.connect(lambda _i: self._update_main_buttons())
 
         # optional: regenerate missing highs/details per stem after separating
@@ -1219,7 +1183,7 @@ class MainWindow(QMainWindow):
         self._thread = QThread(self)
         self._restoring = self.restore_btn.isChecked() and not self.restore_btn.isHidden()
         self._pending_key = self._separation_key()
-        self._worker = SeparateWorker(self.source, self.model_box.currentData(), self._restoring, self.bleed_switch.currentData())
+        self._worker = SeparateWorker(self.source, self.model_box.currentData(), self._restoring, self._bleed_level())
         self._worker.progress.connect(self.on_progress)
         self._worker.moveToThread(self._thread)
         self._thread.started.connect(self._worker.run)

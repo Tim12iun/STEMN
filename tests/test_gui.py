@@ -183,9 +183,9 @@ def test_gear_shows_dot_when_update_is_waiting(window):
 def test_separate_stays_visible_and_glows_only_when_needed(window):
     assert window.separate_btn.isVisibleTo(window) and window.export_btn.isVisibleTo(window)
     assert window.separate_btn.property("lit") is False and window.export_btn.property("lit") is True
-    window.bleed_switch.group.button(2).click()  # a setting that needs a new separation
+    window.clean_btn.click()  # a setting that needs a new separation
     assert window.separate_btn.property("lit") is True and window.export_btn.property("lit") is False
-    window.bleed_switch.group.button(0).click()  # back to what the stems were made with
+    window.clean_btn.click()  # back to what the stems were made with
     assert window.separate_btn.property("lit") is False
 
 
@@ -223,7 +223,7 @@ def test_nothing_moves_when_clicking(window, app):
         lambda: window.toggle_solo("kick"),
         lambda: window.toggle_solo("kick"),
         lambda: window.toggle_stem("snare"),
-        lambda: window.bleed_switch.group.button(2).click(),
+        lambda: window.clean_btn.click(),
         lambda: window.restore_btn.setChecked(not window.restore_btn.isChecked()),
     ]
     for act in actions:
