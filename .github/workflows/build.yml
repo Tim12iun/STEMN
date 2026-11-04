@@ -24,7 +24,7 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
-      - run: pip install -e . pyinstaller
+      - run: pip install -e . pyinstaller "setuptools<81"
       - uses: actions/cache@v4
         with:
           path: models/**/*.ckpt
@@ -51,7 +51,7 @@ jobs:
           --collect-data librosa
           --copy-metadata audio-separator
           --add-data "models${{ runner.os == 'Windows' && ';' || ':' }}models"
-          src/stemn/__main__.py
+          scripts/stemn_entry.py
       - name: Smoke-Test
         shell: bash
         run: |

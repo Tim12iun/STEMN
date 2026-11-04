@@ -9,7 +9,7 @@ description = "Zerlegt Drum-Loops in Kick, Snare, Hi-Hat, Toms und Becken (lokal
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "audio-separator>=0.40",
+    "audio-separator[cpu]>=0.40",
     "soundfile>=0.12",
     "numpy>=1.24",
     "pyyaml>=6",
