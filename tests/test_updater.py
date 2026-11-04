@@ -93,3 +93,23 @@ def test_redirect_drops_token_for_other_host():
     req = urllib.request.Request("https://api.github.com/x", headers={"Authorization": "Bearer t"})
     new = updater._DropAuthOnRedirect().redirect_request(req, None, 302, "Found", {}, "https://objects.example.com/y")
     assert not new.has_header("Authorization")
+
+
+def test_update_script_restarts_only_with_flag(tmp_path, monkeypatch):
+    import subprocess
+    import sys
+
+    from stemn import updater
+
+    if sys.platform == "win32":
+        return
+    root = tmp_path / "stemn.app"
+    staged = tmp_path / "stemn.app.new"
+    root.mkdir()
+    staged.mkdir()
+    monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: None)
+    updater.apply(staged, root)
+    monkeypatch.undo()
+    script = (tmp_path / "stemn-update.sh").read_text()
+    assert str(updater.relaunch_flag(root)) in script and "if [ -f" in script
+    assert subprocess.run(["sh", "-n", str(tmp_path / "stemn-update.sh")]).returncode == 0

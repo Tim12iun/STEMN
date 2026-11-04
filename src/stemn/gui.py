@@ -13,12 +13,14 @@ from PySide6.QtGui import QColor, QDesktopServices, QDrag, QFont, QLinearGradien
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
+    QDialog,
     QFileDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
     QMainWindow,
     QMessageBox,
+    QProgressBar,
     QPushButton,
     QSizePolicy,
     QSlider,
@@ -76,6 +78,7 @@ QPushButton:focus {{ outline: none; }}
 QPushButton#primary {{ background: {ACCENT}; color: #141414; font-weight: 700; letter-spacing: 1px; padding: 6px 16px; }}
 QPushButton#primary:hover {{ background: #EC6636; }}
 QPushButton#primary:disabled {{ background: #4a2a1e; color: #8a6a5e; }}
+QPushButton#icon {{ font-size: 17px; padding: 3px 0; }}
 QPushButton#transport {{ min-width: 38px; max-width: 38px; padding: 6px 0; }}
 QPushButton#transport:checked {{ border: 1px solid {ACCENT}; color: {ACCENT}; }}
 QPushButton#small {{ padding: 2px 0; min-width: 26px; max-width: 26px; font-weight: 700; }}
@@ -918,6 +921,8 @@ class MainWindow(QMainWindow):
         self.source: Path | None = None
         self.stems: dict[str, Path] = {}
         self._thread: QThread | None = None
+        self.update_state: dict = {"phase": "idle"}
+        self._update_thread: QThread | None = None
         self._solo: str | None = None
         self._before_solo: dict[str, bool] | None = None
         self._last_pos = -1
@@ -1019,8 +1024,12 @@ class MainWindow(QMainWindow):
         self.export_btn.setToolTip("Hörbaren Mix mit den eingestellten Pegeln als WAV speichern · ⌘E")
         self.export_btn.setShortcut("Ctrl+E")
         self.export_btn.clicked.connect(self.export_dialog)
+        self.gear_btn = GearButton()
+        self.gear_btn.clicked.connect(self.open_settings)
         for w in (self.import_btn, self.folder_btn, self.mix_grip, self.single_grip, self.separate_btn, self.export_btn):
             lay.addWidget(w)
+        lay.addSpacing(6)
+        lay.addWidget(self.gear_btn)
         # TRENNEN and EXPORTIEREN share one place: only one orange main action at a time
         width = max(self.separate_btn.sizeHint().width(), self.export_btn.sizeHint().width())
         self.separate_btn.setFixedWidth(width)
@@ -1336,19 +1345,226 @@ class MainWindow(QMainWindow):
         if self.stems:
             QDesktopServices.openUrl(QUrl.fromLocalFile(str(next(iter(self.stems.values())).parent)))
 
+    # ---- updates
+    def startup_update_check(self) -> None:
+        from . import updater
+
+        auto = updater.load_config().get("auto_update", True) and updater.install_root() is not None
+        self.check_updates(install=auto)
+
+    def check_updates(self, install: bool) -> None:
+        if self._update_thread is not None:
+            return
+        self._installing = install
+        self._set_update_state(phase="checking")
+        self._update_thread = QThread(self)
+        self._update_worker = UpdateWorker(install)
+        self._update_worker.moveToThread(self._update_thread)
+        self._update_thread.started.connect(self._update_worker.run)
+        self._update_worker.checked.connect(self._on_update_checked)
+        self._update_worker.progress.connect(lambda v: self._set_update_state(phase="downloading", progress=v))
+        self._update_worker.installed.connect(self._on_update_installed)
+        self._update_worker.checked.connect(lambda v, err: (not v or err or not install) and self._update_thread.quit())
+        self._update_worker.installed.connect(lambda *_: self._update_thread.quit())
+        self._update_thread.finished.connect(self._update_done)
+        self._update_thread.start()
+
+    def _update_done(self) -> None:
+        self._update_thread = None
+
+    def _on_update_checked(self, version: str, error: str) -> None:
+        if error:
+            self._set_update_state(phase="error", error=error)
+        elif not version:
+            self._set_update_state(phase="current")
+        else:
+            self._set_update_state(phase="downloading" if self._installing else "available", version=version)
+
+    def _on_update_installed(self, version: str, error: str) -> None:
+        if error:
+            self._set_update_state(phase="error", error=error, version=version)
+        else:
+            self._set_update_state(phase="ready", version=version)
+
+    update_changed = Signal()
+
+    def _set_update_state(self, **state) -> None:
+        if "phase" in state and state["phase"] not in ("downloading",):
+            state.setdefault("progress", 0.0)
+        self.update_state.update(state)
+        phase = self.update_state["phase"]
+        version = self.update_state.get("version")
+        tips = {
+            "available": f"Update auf {version} verfügbar",
+            "downloading": f"Update auf {version} wird geladen",
+            "ready": f"Update auf {version} bereit: wird beim Beenden installiert",
+        }
+        self.gear_btn.set_badge(phase in tips, tips.get(phase, ""))
+        self.update_changed.emit()
+
+    def open_settings(self) -> None:
+        dlg = SettingsDialog(self)
+        dlg.exec()
+        self.update_changed.disconnect(dlg.refresh)
+        dlg.deleteLater()
+
+    def restart_for_update(self) -> None:
+        from . import updater
+
+        root = updater.install_root()
+        if root is not None:
+            updater.relaunch_flag(root).write_text("1", encoding="utf-8")
+        self.close()
+        QApplication.instance().quit()
+
     def closeEvent(self, e):
         self.timer.stop()
         self.player.close()
         super().closeEvent(e)
 
 
-def _background_update() -> None:
-    try:
-        from .server import _auto_update
+class UpdateWorker(QObject):
+    """Talks to GitHub in the background: look for a new version, or download it."""
 
-        _auto_update()
-    except Exception:
-        pass
+    checked = Signal(str, str)  # new version ("" = up to date), error ("" = none)
+    progress = Signal(float)
+    installed = Signal(str, str)  # version, error
+
+    def __init__(self, install: bool) -> None:
+        super().__init__()
+        self.install = install
+
+    def run(self) -> None:
+        from . import updater
+
+        try:
+            rel = updater.check()
+        except Exception as exc:
+            self.checked.emit("", str(exc))
+            return
+        self.checked.emit(rel.version if rel else "", "")
+        if not (rel and self.install):
+            return
+        root = updater.install_root()
+        if root is None:
+            self.installed.emit(rel.version, "Aus dem Quellcode gestartet: bitte 'git pull' ausführen.")
+            return
+        try:
+            staged = updater.prepare(rel, root, lambda done, total: self.progress.emit(done / total if total else 0.0))
+            updater.apply(staged, root)
+            self.installed.emit(rel.version, "")
+        except Exception as exc:
+            self.installed.emit(rel.version, str(exc))
+
+
+class GearButton(QPushButton):
+    """Settings button, top right. An orange dot shows that an update is waiting."""
+
+    def __init__(self) -> None:
+        super().__init__("⚙")
+        self.setObjectName("icon")
+        self.setToolTip("Einstellungen")
+        self.setFixedWidth(40)
+        self.badge = False
+
+    def set_badge(self, on: bool, tooltip: str = "") -> None:
+        self.badge = on
+        self.setToolTip(tooltip or "Einstellungen")
+        self.update()
+
+    def paintEvent(self, e):
+        super().paintEvent(e)
+        if self.badge:
+            p = QPainter(self)
+            p.setRenderHint(QPainter.Antialiasing)
+            p.setPen(QPen(QColor(BG), 2))
+            p.setBrush(QColor(ACCENT))
+            p.drawEllipse(QPointF(self.width() - 8, 8), 4.5, 4.5)
+
+
+class SettingsDialog(QDialog):
+    """Version, updates (search, install, automatic on/off)."""
+
+    def __init__(self, win: "MainWindow") -> None:
+        super().__init__(win)
+        from . import updater
+
+        self.win = win
+        self.setWindowTitle("Einstellungen")
+        self.setMinimumWidth(420)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(20, 18, 20, 18)
+        lay.setSpacing(10)
+
+        lay.addWidget(MainWindow._caption("VERSION"))
+        lay.addWidget(QLabel(f"stemn {__version__}"))
+        lay.addSpacing(6)
+        lay.addWidget(MainWindow._caption("UPDATES"))
+        self.status = QLabel()
+        self.status.setWordWrap(True)
+        lay.addWidget(self.status)
+        self.bar = QProgressBar()
+        self.bar.setRange(0, 1000)
+        self.bar.setTextVisible(False)
+        self.bar.setFixedHeight(6)
+        lay.addWidget(self.bar)
+        row = QHBoxLayout()
+        self.search_btn = QPushButton("Nach Updates suchen")
+        self.search_btn.clicked.connect(lambda: win.check_updates(install=False))
+        self.install_btn = QPushButton("JETZT AKTUALISIEREN")
+        self.install_btn.setObjectName("primary")
+        self.install_btn.clicked.connect(self.install_now)
+        row.addWidget(self.search_btn)
+        row.addStretch(1)
+        row.addWidget(self.install_btn)
+        lay.addLayout(row)
+        lay.addSpacing(6)
+        lay.addWidget(MainWindow._caption("AUTOMATISCH AKTUALISIEREN"))
+        self.auto = SegmentSwitch([("An", "on"), ("Aus", "off")], default="on" if updater.load_config().get("auto_update", True) else "off")
+        for b in self.auto.findChildren(QPushButton):
+            b.clicked.connect(lambda _=False: self._set_auto(self.auto.currentData()))
+        lay.addWidget(self.auto)
+        hint = QLabel("An: neue Versionen werden beim Start geladen und beim Beenden installiert.")
+        hint.setObjectName("muted")
+        hint.setWordWrap(True)
+        lay.addWidget(hint)
+        for w in self.findChildren(QWidget):
+            w.setFocusPolicy(Qt.NoFocus)
+        win.update_changed.connect(self.refresh)
+        self.refresh()
+
+    def _set_auto(self, value: str) -> None:
+        from . import updater
+
+        cfg = updater.load_config()
+        cfg["auto_update"] = value == "on"
+        updater.save_config(cfg)
+
+    def refresh(self) -> None:
+        st = self.win.update_state
+        busy = st["phase"] in ("checking", "downloading")
+        self.search_btn.setEnabled(not busy)
+        self.bar.setVisible(st["phase"] == "downloading")
+        self.bar.setValue(int(st.get("progress", 0) * 1000))
+        self.install_btn.setVisible(st["phase"] in ("available", "ready"))
+        self.install_btn.setText("NEU STARTEN" if st["phase"] == "ready" else "JETZT AKTUALISIEREN")
+        texts = {
+            "idle": "Noch nicht gesucht.",
+            "checking": "Suche nach Updates …",
+            "current": f"stemn {__version__} ist aktuell.",
+            "available": f"Version {st.get('version')} ist verfügbar.",
+            "downloading": f"Version {st.get('version')} wird geladen …",
+            "ready": f"Version {st.get('version')} ist geladen und wird beim Beenden installiert. "
+            "„Neu starten“ installiert sie sofort.",
+            "error": f"Update nicht möglich: {st.get('error')}",
+        }
+        self.status.setText(texts.get(st["phase"], ""))
+
+    def install_now(self) -> None:
+        if self.win.update_state["phase"] == "ready":
+            self.win.restart_for_update()
+        else:
+            self.win.check_updates(install=True)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1363,7 +1579,7 @@ def main(argv: list[str] | None = None) -> int:
         app.setWindowIcon(QIcon(str(icon)))
     win = MainWindow()
     win.show()
-    threading.Thread(target=_background_update, daemon=True).start()
+    QTimer.singleShot(1500, win.startup_update_check)
     if argv and len(argv) > 1 and Path(argv[1]).is_file():
         QTimer.singleShot(0, lambda: win.start(Path(argv[1])))
     return app.exec()

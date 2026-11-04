@@ -241,9 +241,15 @@ def _single_child(folder: Path) -> Path:
     return children[0] if len(children) == 1 and children[0].is_dir() else folder
 
 
+def relaunch_flag(root: Path) -> Path:
+    """If this file exists when stemn quits, the update script starts the new version."""
+    return root.parent / "stemn-update.restart"
+
+
 def apply(staged: Path, root: Path) -> str:
     """Swap ``staged`` in for ``root``. Returns a message for the user."""
     backup = root.parent / f"{root.name}.old"
+    flag = relaunch_flag(root)
     if sys.platform == "win32":
         script = root.parent / "stemn-update.cmd"
         script.write_text(
@@ -253,6 +259,7 @@ def apply(staged: Path, root: Path) -> str:
             f"move \"{root}\" \"{backup}\" >nul\r\n"
             f"move \"{staged}\" \"{root}\" >nul\r\n"
             f"rmdir /s /q \"{backup}\"\r\n"
+            f"if exist \"{flag}\" (del \"{flag}\" & start \"\" \"{root / 'stemn.exe'}\")\r\n"
             "del \"%~f0\"\r\n",
             encoding="utf-8",
         )
@@ -265,7 +272,10 @@ def apply(staged: Path, root: Path) -> str:
         "#!/bin/sh\n"
         f"while kill -0 {os.getpid()} 2>/dev/null; do sleep 1; done\n"
         f'rm -rf "{backup}"\n'
-        f'mv "{root}" "{backup}" && mv "{staged}" "{root}" && rm -rf "{backup}"\n'
+        f'mv "{root}" "{backup}" && mv "{staged}" "{root}" && rm -rf "{backup}" && touch "{root}"\n'
+        f'if [ -f "{flag}" ]; then rm -f "{flag}"; '
+        + (f'open "{root}"' if sys.platform == "darwin" else f'"{root / "stemn"}" >/dev/null 2>&1 &')
+        + "\nfi\n"
         'rm -f "$0"\n',
         encoding="utf-8",
     )
