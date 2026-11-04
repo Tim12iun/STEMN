@@ -50,9 +50,10 @@ jobs:
         run: |
           v="${INPUT_VERSION:-${GITHUB_REF_NAME#v}}"
           sed -i.bak "s/^__version__ = .*/__version__ = \"$v\"/" src/stemn/__init__.py && rm src/stemn/__init__.py.bak
-      - name: PyInstaller
+      - name: PyInstaller (App mit Fenster)
         run: >
-          pyinstaller --noconfirm --clean --name stemn
+          pyinstaller --noconfirm --clean --windowed --name stemn
+          --osx-bundle-identifier de.stemn.app
           --collect-all audio_separator
           --hidden-import stemn._build_token
           --collect-data librosa
@@ -61,12 +62,14 @@ jobs:
           scripts/stemn_entry.py
       - name: Smoke-Test
         shell: bash
+        env:
+          QT_QPA_PLATFORM: offscreen
         run: |
-          ./dist/stemn/stemn --version
-          ./dist/stemn/stemn models list
+          if [ "$RUNNER_OS" = "Windows" ]; then EXE=./dist/stemn/stemn.exe; else EXE=./dist/stemn.app/Contents/MacOS/stemn; fi
+          "$EXE" --selftest-gui
           python -c "import numpy as np, soundfile as sf; sf.write('smoke.wav', np.zeros((44100,2),'float32'), 44100)"
-          ./dist/stemn/stemn separate smoke.wav -s kick -o smoke-out
-          ls smoke-out
+          "$EXE" separate smoke.wav -s kick -o smoke-out
+          ls smoke-out | grep -q "kick"
       - name: Packen
         shell: bash
         run: |
@@ -76,8 +79,8 @@ jobs:
             7z a ../${{ matrix.name }}.zip stemn
             7z a ../${{ matrix.name }}-app.zip stemn '-xr!*.ckpt' '-xr!*.th'
           else
-            zip -qry ../${{ matrix.name }}.zip stemn
-            zip -qry ../${{ matrix.name }}-app.zip stemn -x '*.ckpt' '*.th'
+            ditto -c -k --keepParent stemn.app ../${{ matrix.name }}.zip
+            zip -qry ../${{ matrix.name }}-app.zip stemn.app -x '*.ckpt' '*.th'
           fi
       - uses: actions/upload-artifact@v4
         with:

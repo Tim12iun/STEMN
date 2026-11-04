@@ -149,7 +149,11 @@ def install_root() -> Path | None:
     """Folder of the installed (PyInstaller) app, or None when run from source."""
     if not getattr(sys, "frozen", False):
         return None
-    return Path(sys.executable).resolve().parent
+    exe = Path(sys.executable).resolve()
+    for parent in exe.parents:  # macOS: replace the whole stemn.app bundle
+        if parent.suffix == ".app":
+            return parent
+    return exe.parent
 
 
 def _download(url: str, target: Path, progress=None) -> None:
@@ -167,9 +171,16 @@ def _manifests(models_dir: Path) -> dict[str, str]:
     return {p.parent.name: p.read_text(encoding="utf-8") for p in models_dir.glob("*/stemn-model.yaml")}
 
 
-def _bundle_dir(root: Path) -> Path:
-    """PyInstaller >= 6 puts data into _internal/."""
-    return root / "_internal" if (root / "_internal").is_dir() else root
+def _models_dir(root: Path) -> Path | None:
+    """The real (non-symlinked) models folder inside an install.
+
+    Windows: <root>/_internal/models, macOS: stemn.app/Contents/Resources/models.
+    """
+    for manifest in sorted(root.rglob("stemn-model.yaml")):
+        candidate = manifest.parent.parent
+        if not any(p.is_symlink() for p in (candidate, *candidate.parents) if root in p.parents or p == root):
+            return candidate
+    return None
 
 
 def prepare(rel: Release, root: Path, progress=None) -> Path:
@@ -188,10 +199,10 @@ def prepare(rel: Release, root: Path, progress=None) -> Path:
             _download(app_url, tmp / "app.zip", progress)
             _extract(tmp / "app.zip", tmp / "x")
             new_root = _single_child(tmp / "x")
-            old_models = _bundle_dir(root) / "models"
-            new_models = _bundle_dir(new_root) / "models"
+            old_models = _models_dir(root)
+            new_models = _models_dir(new_root)
             # app package ships manifests only; reuse the old model files if unchanged
-            if old_models.is_dir() and _manifests(old_models) == _manifests(new_models):
+            if old_models and new_models and _manifests(old_models) == _manifests(new_models):
                 shutil.rmtree(new_models, ignore_errors=True)
                 shutil.copytree(old_models, new_models)
             elif full_url:
@@ -217,11 +228,12 @@ def _extract(zip_path: Path, target: Path) -> None:
             dest = (target / member).resolve()
             if not str(dest).startswith(str(target.resolve())):
                 raise UpdateError("Ungueltiges Update-Paket")
-        zf.extractall(target)
-    if sys.platform != "win32":  # zipfile drops the exec bit
-        for f in target.rglob("*"):
-            if f.is_file() and (f.name == "stemn" or f.suffix in (".so", ".dylib")):
-                f.chmod(0o755)
+        if sys.platform == "darwin":
+            # ditto keeps symlinks and permissions inside the .app bundle; zipfile does not
+            target.mkdir(parents=True, exist_ok=True)
+            subprocess.run(["ditto", "-x", "-k", str(zip_path), str(target)], check=True)
+        else:
+            zf.extractall(target)
 
 
 def _single_child(folder: Path) -> Path:

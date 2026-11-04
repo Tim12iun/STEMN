@@ -13,7 +13,9 @@ dependencies = [
     "soundfile>=0.12",
     "numpy>=1.24",
     "pyyaml>=6",
-    "audioread>=3",  # audio-separator importiert es, librosa 1.x bringt es nicht mehr mit
+    "audioread>=3",
+    "PySide6-Essentials>=6.6",  # Oberflaeche
+    "sounddevice>=0.4",         # Wiedergabe (bringt PortAudio auf Mac/Windows mit)  # audio-separator importiert es, librosa 1.x bringt es nicht mehr mit
 ]
 
 [project.optional-dependencies]
@@ -21,6 +23,9 @@ dev = ["pytest>=8"]
 
 [project.scripts]
 stemn = "stemn.cli:main"
+
+[project.gui-scripts]
+stemn-app = "stemn.gui:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -18,9 +18,11 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
-      - name: CPU-Torch (Linux, spart den CUDA-Download)
+      - name: CPU-Torch und Qt-Systembibliotheken (Linux)
         if: runner.os == 'Linux'
-        run: pip install torch --index-url https://download.pytorch.org/whl/cpu
+        run: |
+          sudo apt-get update -q && sudo apt-get install -y -q libegl1 libxkbcommon0 libportaudio2
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
       - run: pip install -e ".[dev]"
       - run: pytest -q
 

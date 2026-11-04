@@ -3,28 +3,35 @@
 Zerlegt Drum-Loops lokal und offline in **Kick, Snare, Hi-Hat, Toms, Ride und Crash**.
 Die Stems sind sample-genau so lang wie das Original und passen damit direkt aufs Grid in Ableton.
 
-Status: **Phase 1, Backend** (Kommandozeile und lokaler Dienst). Max-for-Live-Device und Standalone-App folgen.
+Status: App mit Oberflaeche (Mac und Windows). Das Max-for-Live-Device folgt.
 
-## Benutzen (fertiges Paket)
+## Benutzen
 
-1. Unter *Actions → Build* (oder *Releases*) das Paket fuer dein System laden: `stemn-macos-arm64.zip` oder `stemn-windows-x64.zip`.
+1. Unter *Releases* das Paket fuer dein System laden: `stemn-macos-arm64.zip` (Mac mit M-Chip) oder `stemn-windows-x64.zip`.
 2. Entpacken. Das Modell ist schon enthalten.
-3. Im entpackten Ordner:
+   - **Mac:** `stemn.app` in den Programme-Ordner ziehen. Beim ersten Start blockiert macOS die App, weil sie nicht signiert ist:
+     Rechtsklick auf die App → *Oeffnen* → *Oeffnen*, oder im Terminal `xattr -dr com.apple.quarantine /Applications/stemn.app`.
+   - **Windows:** Ordner `stemn` irgendwohin legen, `stemn.exe` starten. Bei der SmartScreen-Warnung *Weitere Informationen* → *Trotzdem ausfuehren*.
+3. Drum-Loop ins Fenster ziehen. Nach der Trennung:
+   - **M** schaltet eine Spur stumm, **S** spielt sie solo, **Abspielen** spielt alles synchron als Loop.
+   - **⠿ ziehen** an einer Spur: die Spur direkt in Ableton ins Arrangement oder auf eine Spur ziehen.
+   - **⠿ Mix ziehen**: alle gerade hoerbaren Spuren zusammen als eine Datei ziehen (z.B. Loop ohne Kick).
+
+Die Dateien liegen im Ordner `<Loop> stems` neben dem Original und sind sample-genau gleich lang, also direkt auf dem Grid.
+Am besten funktioniert es mit einer **reinen Drum-Spur** (z.B. vorher mit der Stem-Separation in Live die Drums trennen).
+Eingangsformate: WAV, AIFF, FLAC.
+
+### Kommandozeile (optional)
 
 ```bash
 stemn separate "Loop.wav"                 # alle Stems
 stemn separate "Loop.wav" -s kick         # nur die Kick
-stemn separate "Loop.wav" -s kick,snare -o Stems/
-stemn separate "Loop.wav" -q fast          # schneller (fast / normal / best)
+stemn separate "Loop.wav" -q fast         # schneller (fast / normal / best)
 stemn models list                         # Modelle anzeigen
 stemn serve                               # Dienst fuer Max for Live (Port 47800)
 ```
 
-Ergebnis: `Loop - kick.wav`, `Loop - snare.wav` usw. im Ordner `Loop stems` neben der Datei.
-
-Am besten funktioniert es mit einer **reinen Drum-Spur** (z.B. vorher mit der Stem-Separation in Live die Drums trennen).
-Eingangsformate: WAV, AIFF, FLAC.
-
+Auf dem Mac liegt das Programm in `stemn.app/Contents/MacOS/stemn`.
 Stem-Namen: `kick`, `snare`, `hihat`, `toms`, `ride`, `crash` und `cymbals` (= Ride + Crash zusammen).
 
 ## Updates
