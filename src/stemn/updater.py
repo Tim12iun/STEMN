@@ -117,8 +117,13 @@ def _request(url: str, accept: str = "application/vnd.github+json"):
 
 
 def latest_release() -> Release | None:
+    """Newest release that has a package for this computer.
+
+    Releases may be Mac-only (Windows is built later in one go), so a Windows
+    install must not be offered a version without a Windows package.
+    """
     try:
-        with _request(f"{API}/repos/{REPO}/releases/latest") as resp:
+        with _request(f"{API}/repos/{REPO}/releases?per_page=30") as resp:
             data = json.load(resp)
     except urllib.error.HTTPError as exc:
         if exc.code in (401, 403, 404):
@@ -129,8 +134,24 @@ def latest_release() -> Release | None:
         raise UpdateError(f"GitHub antwortet mit {exc.code}") from exc
     except OSError as exc:
         raise UpdateError(f"Keine Verbindung zu GitHub: {exc}") from exc
-    assets = {a["name"]: a["url"] for a in data.get("assets", [])}
-    return Release(version=data.get("tag_name", "0"), assets=assets, notes=data.get("body") or "")
+    return pick_release(data, platform_tag())
+
+
+def pick_release(releases: list[dict], tag: str | None) -> Release | None:
+    best = None
+    for data in releases:
+        if data.get("draft") or data.get("prerelease"):
+            continue
+        rel = Release(
+            version=data.get("tag_name", "0"),
+            assets={a["name"]: a["url"] for a in data.get("assets", [])},
+            notes=data.get("body") or "",
+        )
+        if tag and not (rel.asset_for(tag, app_only=True) or rel.asset_for(tag, app_only=False)):
+            continue
+        if best is None or parse_version(rel.version) > parse_version(best.version):
+            best = rel
+    return best
 
 
 class UpdateError(Exception):
