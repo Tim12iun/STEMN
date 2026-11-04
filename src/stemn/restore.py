@@ -2,7 +2,7 @@
 
 Separation leaves gaps where the drums overlapped (dull highs, thin toms,
 "watery" tails). A restoration model regenerates such missing detail from what
-it learned. stemn runs it per stem, chunked, on the CPU.
+it learned. stemn runs it per stem, in short overlapping pieces, on the CPU.
 
 Restoration models live next to the separation models, each in its own folder
 with a ``stemn-restore.yaml`` manifest::
@@ -27,8 +27,8 @@ from .models import bundled_models_dir, user_models_dir
 
 RESTORE_MANIFEST = "stemn-restore.yaml"
 DEFAULT_RESTORER_ID = "apollo-uni"
-CHUNK_SECONDS = 10.0  # longer loops are processed in pieces ...
-FADE_SECONDS = 0.5  # ... that overlap and crossfade, so no seam is audible
+CHUNK_SECONDS = 3.0  # Apollo works in short pieces (10 s pieces needed ~7 GB RAM, 3 s ~2.5 GB) ...
+FADE_SECONDS = 0.3  # ... that overlap and crossfade, so no seam is audible
 
 
 class RestoreError(Exception):

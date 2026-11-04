@@ -195,6 +195,10 @@ class Engine:
             with _track_chunks(report, 0.08, split_end):
                 separator.separate(str(input_path), custom_output_names=names)
             report(split_end)
+            if restorer:
+                import gc
+
+                gc.collect()  # give the separation's buffers back before Apollo needs its share
 
             raw_files = {canonical_stem(p.stem.removeprefix("stem_")): p for p in work.glob("stem_*")}
             if bleed != "off":

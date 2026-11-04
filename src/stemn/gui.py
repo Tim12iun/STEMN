@@ -324,6 +324,19 @@ def separate_command(
     return cmd
 
 
+_RUNNING: set = set()  # separation processes started by this window
+
+
+def stop_separations() -> None:
+    """End every separation process still running (window closing)."""
+    for proc in list(_RUNNING):
+        try:
+            proc.kill()
+        except OSError:
+            pass
+    _RUNNING.clear()
+
+
 def _read_progress(path: Path) -> float | None:
     try:
         return min(max(float(path.read_text(encoding="utf-8")), 0.0), 1.0)
@@ -356,6 +369,7 @@ def run_separation(path: Path, model_id: str | None, progress=None, restore: boo
                 stderr=err,
                 **kwargs,
             )
+            _RUNNING.add(proc)
             last = None
             while proc.poll() is None:
                 value = _read_progress(progress_file)
@@ -363,6 +377,7 @@ def run_separation(path: Path, model_id: str | None, progress=None, restore: boo
                     progress(value)
                     last = value
                 time.sleep(0.15)
+            _RUNNING.discard(proc)
         data = {}
         if result_file.is_file():
             try:
@@ -374,6 +389,11 @@ def run_separation(path: Path, model_id: str | None, progress=None, restore: boo
         raise RuntimeError(data["error"])
     if proc.returncode == 0 and "stems" in data:
         return next(iter(data["stems"].values()), {})
+    if proc.returncode in (-9, 137):
+        raise RuntimeError(
+            "Der Mac hat die Berechnung abgebrochen, vermutlich war der Arbeitsspeicher voll. "
+            "Schließ andere Programme oder trenne ohne Apollo."
+        )
     tail = stderr.decode("utf-8", "replace").strip().splitlines()[-3:]
     detail = ("\n" + "\n".join(tail)) if tail else ""
     raise RuntimeError(f"Die Trennung ist abgestuerzt (Code {proc.returncode}).{detail}")
@@ -1210,6 +1230,8 @@ class MainWindow(QMainWindow):
         self.separate_btn.setEnabled(self.source is not None)
 
     def on_failed(self, msg: str) -> None:
+        if getattr(self, "_closing", False):
+            return  # we ended the separation ourselves
         self.wave.progress = None
         self.wave.update()
         self.status.setText(f"Fehler beim Trennen: {msg}")
@@ -1470,6 +1492,8 @@ class MainWindow(QMainWindow):
         QApplication.instance().quit()
 
     def closeEvent(self, e):
+        self._closing = True
+        stop_separations()
         self.timer.stop()
         self.player.close()
         super().closeEvent(e)

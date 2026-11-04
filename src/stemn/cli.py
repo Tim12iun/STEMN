@@ -17,6 +17,8 @@ def _cmd_separate(args) -> int:
     stems = [s for s in args.stems.split(",") if s] if args.stems else None
     results = {}
     progress = _progress_writer(args.progress_file) if args.progress_file else None
+    if args.progress_file:
+        _exit_with_parent()  # started by the app window: never keep working after it is gone
     for path in args.input:
         out = separate(path, stems=stems, model_id=args.model, output_dir=args.output, quality=args.quality, progress=progress, restore=args.restore, bleed=args.bleed)
         results[str(path)] = {k: str(v) for k, v in out.items()}
@@ -29,6 +31,22 @@ def _cmd_separate(args) -> int:
     if args.result_file:
         _write_result(args.result_file, {"stems": results})
     return 0
+
+
+def _exit_with_parent() -> None:
+    import os
+    import threading
+    import time
+
+    parent = os.getppid()
+
+    def watch() -> None:
+        while True:
+            time.sleep(1.0)
+            if os.getppid() != parent:
+                os._exit(3)
+
+    threading.Thread(target=watch, daemon=True).start()
 
 
 def _progress_writer(path: str):
