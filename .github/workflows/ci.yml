@@ -40,6 +40,6 @@ jobs:
       - uses: actions/cache@v4
         with:
           path: models/**/*.ckpt
-          key: models-${{ hashFiles('models/*/stemn-model.yaml') }}
+          key: models-${{ hashFiles('models/*/stemn-*.yaml') }}
       - run: python scripts/fetch_models.py
       - run: pytest -q tests/test_engine_model.py

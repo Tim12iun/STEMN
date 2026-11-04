@@ -18,7 +18,7 @@ def _cmd_separate(args) -> int:
     results = {}
     progress = _progress_writer(args.progress_file) if args.progress_file else None
     for path in args.input:
-        out = separate(path, stems=stems, model_id=args.model, output_dir=args.output, quality=args.quality, progress=progress)
+        out = separate(path, stems=stems, model_id=args.model, output_dir=args.output, quality=args.quality, progress=progress, restore=args.restore)
         results[str(path)] = {k: str(v) for k, v in out.items()}
         if not args.json:
             print(f"{path}:")
@@ -111,6 +111,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("-m", "--model", help="Modell-ID (siehe 'stemn models list')")
     s.add_argument("-o", "--output", help="Zielordner (Standard: '<Datei> stems' daneben)")
     s.add_argument("-q", "--quality", default="best", choices=["fast", "normal", "best"], help="Tempo/Qualitaet (Standard: best)")
+    s.add_argument("-r", "--restore", action="store_true", help="danach jede Spur mit Apollo reparieren (fehlende Hoehen und Details ergaenzen, langsamer)")
     s.add_argument("--json", action="store_true", help="Ergebnis als JSON ausgeben")
     s.add_argument("--result-file", help=argparse.SUPPRESS)  # used by the app window
     s.add_argument("--progress-file", help=argparse.SUPPRESS)  # used by the app window

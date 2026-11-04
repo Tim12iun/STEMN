@@ -71,6 +71,7 @@ class Engine:
     def __init__(self) -> None:
         self._separator = None
         self._model_id: str | None = None
+        self._restorer = None
         self._lock = threading.Lock()
 
     @staticmethod
@@ -99,6 +100,26 @@ class Engine:
             self._separator.model_instance.overlap = overlap
         return self._separator
 
+    def _load_restorer(self):
+        from .restore import Restorer, get_restorer
+
+        spec = get_restorer()
+        if self._restorer is None or self._restorer.spec.id != spec.id:
+            self._restorer = Restorer(spec)
+        return self._restorer
+
+    def _restore_file(self, restorer, path: Path, progress) -> Path:
+        """Restore one raw stem file into a new file next to it (at the restorer's sample rate)."""
+        audio, sr = sf.read(str(path), dtype="float32", always_2d=True)
+        if sr != restorer.sample_rate:
+            import librosa
+
+            audio = librosa.resample(audio.T, orig_sr=sr, target_sr=restorer.sample_rate).T
+        restored = restorer.restore(audio, progress=progress)
+        target = path.with_name(path.stem + "_restored.wav")
+        sf.write(str(target), restored, restorer.sample_rate, subtype="FLOAT")
+        return target
+
     def separate(
         self,
         input_path: str | Path,
@@ -107,11 +128,13 @@ class Engine:
         output_dir: str | Path | None = None,
         quality: str = "best",
         progress=None,
+        restore: bool = False,
     ) -> dict[str, Path]:
         """Separate ``input_path``; return ``{canonical_stem: wav_path}``.
 
         ``stems`` limits the files written (e.g. ``["kick"]``); ``None`` writes all.
         ``progress`` is called with values from 0 to 1.
+        ``restore`` runs the restoration model (Apollo) on every stem afterwards.
         """
         report = progress or (lambda _v: None)
         report(0.0)
@@ -135,13 +158,22 @@ class Engine:
         with self._lock, tempfile.TemporaryDirectory(prefix="stemn-") as tmp:
             work = Path(tmp)
             separator = self._load(spec, work, overlap)
+            restorer = self._load_restorer() if restore else None
             report(0.08)
             names = {raw: f"stem_{canonical_stem(raw)}" for raw in spec.stems}
-            with _track_chunks(report, 0.08, 0.95):
+            split_end = 0.55 if restorer else 0.95
+            with _track_chunks(report, 0.08, split_end):
                 separator.separate(str(input_path), custom_output_names=names)
-            report(0.95)
+            report(split_end)
 
             raw_files = {canonical_stem(p.stem.removeprefix("stem_")): p for p in work.glob("stem_*")}
+            if restorer:
+                todo = [s for s in raw_files if wanted is None or s in wanted or any(s in VIRTUAL_STEMS.get(w, ()) for w in wanted)]
+                span = (0.95 - split_end) / max(len(todo), 1)
+                for i, stem in enumerate(todo):
+                    start = split_end + i * span
+                    raw_files[stem] = self._restore_file(restorer, raw_files[stem], lambda v, a=start: report(a + span * v))
+                report(0.95)
             result: dict[str, Path] = {}
             for stem, path in raw_files.items():
                 if wanted is None or stem in wanted:
@@ -206,7 +238,7 @@ def default_engine() -> Engine:
     return _default_engine
 
 
-def separate(input_path, stems=None, model_id=None, output_dir=None, quality="best", progress=None) -> dict[str, Path]:
+def separate(input_path, stems=None, model_id=None, output_dir=None, quality="best", progress=None, restore=False) -> dict[str, Path]:
     return default_engine().separate(
-        input_path, stems=stems, model_id=model_id, output_dir=output_dir, quality=quality, progress=progress
+        input_path, stems=stems, model_id=model_id, output_dir=output_dir, quality=quality, progress=progress, restore=restore
     )

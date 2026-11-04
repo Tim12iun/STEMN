@@ -54,6 +54,14 @@ Weil das Repo privat ist, braucht stemn einen GitHub-Token mit **nur Lesezugriff
 Er wird beim Build aus dem Repo-Secret `STEMN_UPDATE_TOKEN` ins Paket eingebaut.
 Alternativ pro Rechner: `stemn update --token <TOKEN>`.
 
+## Testoptionen: 5-Stem-Modell und Apollo-Reparatur
+
+- **Modell** oben im Fenster: neben dem bisherigen 6-Stem-Modell gibt es *MDX23C DrumSep 5-Stem 2025 (jarredou)*.
+  Es trennt Kick, Snare und Toms sauberer, liefert Ride und Crash aber als eine Spur *Becken*.
+- **REPARIEREN** (Knopf *APOLLO · FEHLENDES ERGÄNZEN*): nach dem Trennen laeuft jede Spur durch das
+  Restaurierungsmodell Apollo, das fehlende Hoehen und Details neu erzeugt. Das dauert deutlich laenger
+  als das Trennen selbst. Kommandozeile: `stemn separate Loop.wav --restore`.
+
 ## Weitere Modelle hinzufuegen
 
 Ohne Code zu aendern:

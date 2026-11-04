@@ -8,7 +8,7 @@ from stemn import gui
 
 
 def _fake(monkeypatch, code: str):
-    def cmd(path, model_id, result_file, progress_file):
+    def cmd(path, model_id, result_file, progress_file, restore=False):
         return [sys.executable, "-c", code, str(result_file), str(progress_file)]
 
     monkeypatch.setattr(gui, "separate_command", cmd)
@@ -66,3 +66,9 @@ def test_separator_uses_cpu(monkeypatch):
     sep = LocalSeparator()
     assert sep.torch_device.type == "cpu"
     assert sep.onnx_execution_provider == ["CPUExecutionProvider"]
+
+
+def test_restore_flag_reaches_child_command(tmp_path):
+    cmd = gui.separate_command(tmp_path / "a.wav", None, tmp_path / "r.json", tmp_path / "p.txt", restore=True)
+    assert cmd[-1] == "--restore"
+    assert "--restore" not in gui.separate_command(tmp_path / "a.wav", None, tmp_path / "r.json", tmp_path / "p.txt")

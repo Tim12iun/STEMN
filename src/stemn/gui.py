@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
 
 from . import __version__
 from .models import discover_models
+from .restore import discover_restorers
 
 AUDIO_EXT = {".wav", ".aif", ".aiff", ".flac"}
 STEM_LABELS = {
@@ -292,7 +293,7 @@ class Player:
 QUALITY = "best"  # the app always separates in the best quality
 
 
-def separate_command(path: Path, model_id: str | None, result_file: Path, progress_file: Path) -> list[str]:
+def separate_command(path: Path, model_id: str | None, result_file: Path, progress_file: Path, restore: bool = False) -> list[str]:
     """Command line that runs one separation in its own process.
 
     A crash deep inside torch (native abort) then only ends that process,
@@ -305,6 +306,8 @@ def separate_command(path: Path, model_id: str | None, result_file: Path, progre
     cmd += [str(path), "-q", QUALITY, "--result-file", str(result_file), "--progress-file", str(progress_file)]
     if model_id:
         cmd += ["-m", model_id]
+    if restore:
+        cmd.append("--restore")
     return cmd
 
 
@@ -315,7 +318,7 @@ def _read_progress(path: Path) -> float | None:
         return None
 
 
-def run_separation(path: Path, model_id: str | None, progress=None) -> dict:
+def run_separation(path: Path, model_id: str | None, progress=None, restore: bool = False) -> dict:
     """Run the separation in a child process. Returns {stem: path} or raises RuntimeError.
 
     ``progress`` (optional) is called with values from 0 to 1 while it runs.
@@ -334,7 +337,7 @@ def run_separation(path: Path, model_id: str | None, progress=None) -> dict:
             kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
         with open(stderr_file, "wb") as err:
             proc = subprocess.Popen(
-                separate_command(path, model_id, result_file, progress_file),
+                separate_command(path, model_id, result_file, progress_file, restore),
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
                 stderr=err,
@@ -368,13 +371,13 @@ class SeparateWorker(QObject):
     failed = Signal(str)
     progress = Signal(float)
 
-    def __init__(self, path: Path, model_id: str | None) -> None:
+    def __init__(self, path: Path, model_id: str | None, restore: bool = False) -> None:
         super().__init__()
-        self.path, self.model_id = path, model_id
+        self.path, self.model_id, self.restore = path, model_id, restore
 
     def run(self) -> None:
         try:
-            self.finished.emit(run_separation(self.path, self.model_id, self.progress.emit))
+            self.finished.emit(run_separation(self.path, self.model_id, self.progress.emit, self.restore))
         except Exception as exc:
             self.failed.emit(str(exc))
 
@@ -1050,6 +1053,18 @@ class MainWindow(QMainWindow):
         lay.addWidget(self.model_box)
         lay.addSpacing(8)
 
+        # optional: regenerate missing highs/details per stem after separating
+        self.restore_btn = QPushButton("APOLLO · FEHLENDES ERGÄNZEN")
+        self.restore_btn.setObjectName("small")
+        self.restore_btn.setCheckable(True)
+        self.restore_btn.setToolTip("Repariert jede Spur nach dem Trennen: ergänzt fehlende Höhen und Details. Dauert länger.")
+        has_restorer = any(r.is_available() for r in discover_restorers().values())
+        restore_caption = self._caption("REPARIEREN")
+        for w in (restore_caption, self.restore_btn):
+            w.setVisible(has_restorer)
+            lay.addWidget(w)
+        lay.addSpacing(8)
+
         lay.addWidget(self._caption("SPUREN"))
         self.rows_box = QVBoxLayout()
         self.rows_box.setSpacing(4)
@@ -1122,7 +1137,8 @@ class MainWindow(QMainWindow):
         self.separate_btn.setEnabled(False)
 
         self._thread = QThread(self)
-        self._worker = SeparateWorker(self.source, self.model_box.currentData())
+        self._restoring = self.restore_btn.isChecked() and not self.restore_btn.isHidden()
+        self._worker = SeparateWorker(self.source, self.model_box.currentData(), self._restoring)
         self._worker.progress.connect(self.on_progress)
         self._worker.moveToThread(self._thread)
         self._thread.started.connect(self._worker.run)
@@ -1139,7 +1155,8 @@ class MainWindow(QMainWindow):
         self.play_btn.setText("▶")
 
     def on_progress(self, value: float) -> None:
-        text = "Modell wird geladen" if value < 0.08 else "Trenne Spuren" if value < 0.95 else "Spuren werden gespeichert"
+        restoring = getattr(self, "_restoring", False) and value >= 0.55
+        text = "Modell wird geladen" if value < 0.08 else "Repariere Spuren" if restoring and value < 0.95 else "Trenne Spuren" if value < 0.95 else "Spuren werden gespeichert"
         self.wave.set_progress(value, text)
 
     def _cleanup_thread(self) -> None:

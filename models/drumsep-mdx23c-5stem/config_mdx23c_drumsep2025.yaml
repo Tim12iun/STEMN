@@ -1,0 +1,51 @@
+audio:
+  chunk_size: 523776
+  dim_f: 1024
+  dim_t: 1024
+  hop_length: 512
+  n_fft: 2048
+  num_channels: 2
+  sample_rate: 44100
+  min_mean_abs: 0.000
+
+model:
+  act: gelu
+  bottleneck_factor: 4
+  growth: 128
+  norm: InstanceNorm
+  num_blocks_per_scale: 2
+  num_channels: 128
+  num_scales: 5
+  num_subbands: 4
+  scale:
+  - 2
+  - 2
+
+training:
+  batch_size: 2
+  gradient_accumulation_steps: 4
+  grad_clip: 0
+  instruments:
+  - kick
+  - snare
+  - toms
+  - hh
+  - cymbals
+  lr: 1.0
+  patience: 200
+  reduce_factor: 0.95
+  target_instrument: null
+  num_epochs: 1000
+  num_steps: 1533
+  q: 0.95
+  coarse_loss_clip: true
+  ema_momentum: 0.999
+  optimizer: prodigy
+  other_fix: false
+  use_amp: true
+
+inference:
+  batch_size: 2
+  dim_t: 512
+  num_overlap: 4
+  normalize: false
