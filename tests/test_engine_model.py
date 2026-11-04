@@ -86,3 +86,15 @@ def test_restore_keeps_length_and_changes_audio(tmp_path):
         assert a.shape == b.shape == audio.shape
         assert np.isfinite(b).all() and np.abs(b).max() < 4.0
         assert not np.allclose(a, b, atol=1e-4)
+
+
+def test_bleed_keeps_length(tmp_path):
+    from stemn.engine import separate
+
+    audio, sr = _drum_loop()
+    loop = tmp_path / "loop.wav"
+    sf.write(loop, audio, sr)
+    out = separate(loop, stems=["kick", "cymbals"], output_dir=tmp_path / "out", bleed="strong")
+    assert set(out) == {"kick", "cymbals"}
+    for path in out.values():
+        assert sf.info(str(path)).frames == len(audio)

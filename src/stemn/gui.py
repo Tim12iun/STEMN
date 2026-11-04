@@ -8,7 +8,7 @@ from pathlib import Path
 
 import numpy as np
 import soundfile as sf
-from PySide6.QtCore import QMimeData, QObject, QPointF, QRectF, Qt, QThread, QTimer, QUrl, Signal
+from PySide6.QtCore import QMimeData, QObject, QPointF, QRectF, QSize, Qt, QThread, QTimer, QUrl, Signal
 from PySide6.QtGui import QColor, QDesktopServices, QDrag, QFont, QLinearGradient, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import (
     QApplication,
@@ -79,6 +79,9 @@ QPushButton:focus {{ outline: none; }}
 QPushButton#primary {{ background: {ACCENT}; color: #141414; font-weight: 700; letter-spacing: 1px; padding: 6px 16px; }}
 QPushButton#primary:hover {{ background: #EC6636; }}
 QPushButton#primary:disabled {{ background: #4a2a1e; color: #8a6a5e; }}
+QPushButton#primary[lit="false"] {{ background: {RAISED2}; color: {TEXT}; }}
+QPushButton#primary[lit="false"]:hover {{ background: {LINE}; }}
+QPushButton#primary[lit="false"]:disabled {{ background: {RAISED}; color: {MUTED}; }}
 QPushButton#icon {{ font-size: 17px; padding: 3px 0; }}
 QPushButton#transport {{ min-width: 38px; max-width: 38px; padding: 6px 0; }}
 QPushButton#transport:checked {{ border: 1px solid {ACCENT}; color: {ACCENT}; }}
@@ -298,7 +301,9 @@ class Player:
 QUALITY = "best"  # the app always separates in the best quality
 
 
-def separate_command(path: Path, model_id: str | None, result_file: Path, progress_file: Path, restore: bool = False) -> list[str]:
+def separate_command(
+    path: Path, model_id: str | None, result_file: Path, progress_file: Path, restore: bool = False, bleed: str = "off"
+) -> list[str]:
     """Command line that runs one separation in its own process.
 
     A crash deep inside torch (native abort) then only ends that process,
@@ -311,6 +316,8 @@ def separate_command(path: Path, model_id: str | None, result_file: Path, progre
     cmd += [str(path), "-q", QUALITY, "--result-file", str(result_file), "--progress-file", str(progress_file)]
     if model_id:
         cmd += ["-m", model_id]
+    if bleed != "off":
+        cmd += ["--bleed", bleed]
     if restore:
         cmd.append("--restore")
     return cmd
@@ -323,7 +330,7 @@ def _read_progress(path: Path) -> float | None:
         return None
 
 
-def run_separation(path: Path, model_id: str | None, progress=None, restore: bool = False) -> dict:
+def run_separation(path: Path, model_id: str | None, progress=None, restore: bool = False, bleed: str = "off") -> dict:
     """Run the separation in a child process. Returns {stem: path} or raises RuntimeError.
 
     ``progress`` (optional) is called with values from 0 to 1 while it runs.
@@ -342,7 +349,7 @@ def run_separation(path: Path, model_id: str | None, progress=None, restore: boo
             kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
         with open(stderr_file, "wb") as err:
             proc = subprocess.Popen(
-                separate_command(path, model_id, result_file, progress_file, restore),
+                separate_command(path, model_id, result_file, progress_file, restore, bleed),
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
                 stderr=err,
@@ -376,13 +383,13 @@ class SeparateWorker(QObject):
     failed = Signal(str)
     progress = Signal(float)
 
-    def __init__(self, path: Path, model_id: str | None, restore: bool = False) -> None:
+    def __init__(self, path: Path, model_id: str | None, restore: bool = False, bleed: str = "off") -> None:
         super().__init__()
-        self.path, self.model_id, self.restore = path, model_id, restore
+        self.path, self.model_id, self.restore, self.bleed = path, model_id, restore, bleed
 
     def run(self) -> None:
         try:
-            self.finished.emit(run_separation(self.path, self.model_id, self.progress.emit, self.restore))
+            self.finished.emit(run_separation(self.path, self.model_id, self.progress.emit, self.restore, self.bleed))
         except Exception as exc:
             self.failed.emit(str(exc))
 
@@ -1024,8 +1031,9 @@ class MainWindow(QMainWindow):
         self.separate_btn.setToolTip("Loop in Kick, Snare, Hi-Hat, Toms, Ride und Crash zerlegen · ⌘T")
         self.separate_btn.setShortcut("Ctrl+T")
         self.separate_btn.clicked.connect(self.separate_current)
-        self.export_btn = QPushButton("EXPORTIEREN")
+        self.export_btn = QPushButton(" EXPORTIEREN")
         self.export_btn.setObjectName("primary")
+        self.export_btn.setIconSize(QSize(14, 14))
         self.export_btn.setToolTip("Hörbaren Mix mit den eingestellten Pegeln als WAV speichern · ⌘E")
         self.export_btn.setShortcut("Ctrl+E")
         self.export_btn.clicked.connect(self.export_dialog)
@@ -1035,11 +1043,29 @@ class MainWindow(QMainWindow):
             lay.addWidget(w)
         lay.addSpacing(6)
         lay.addWidget(self.gear_btn)
-        # TRENNEN and EXPORTIEREN share one place: only one orange main action at a time
-        width = max(self.separate_btn.sizeHint().width(), self.export_btn.sizeHint().width())
-        self.separate_btn.setFixedWidth(width)
-        self.export_btn.setFixedWidth(width)
+        # both always keep their size; only one of them is orange at a time
+        self.separate_btn.setFixedWidth(self.separate_btn.sizeHint().width())
+        self.export_btn.setFixedWidth(self.export_btn.sizeHint().width() + 20)
+        self._separated_with = None  # settings of the stems on screen
         return bar
+
+    def _separation_key(self):
+        restore = self.restore_btn.isChecked() and not self.restore_btn.isHidden()
+        return (self.source, self.model_box.currentData(), restore, self.bleed_switch.currentData())
+
+    def _update_main_buttons(self) -> None:
+        """TRENNEN glows when (re)separating is needed, otherwise EXPORTIEREN glows."""
+        if not hasattr(self, "bleed_switch"):
+            return  # panel not built yet
+        loaded = bool(self.stems)
+        needs = self.source is not None and (not loaded or self._separation_key() != self._separated_with)
+        for btn, lit in ((self.separate_btn, needs), (self.export_btn, loaded and not needs)):
+            if btn.property("lit") != lit:
+                btn.setProperty("lit", lit)
+                btn.style().unpolish(btn)
+                btn.style().polish(btn)
+        color = "#141414" if (loaded and not needs) else (TEXT if loaded else MUTED)
+        self.export_btn.setIcon(download_icon(color))
 
     def _build_panel(self) -> QFrame:
         panel = QFrame()
@@ -1064,11 +1090,21 @@ class MainWindow(QMainWindow):
         lay.addWidget(self.model_box)
         lay.addSpacing(8)
 
+        # damp cross-talk: every stem keeps less of the other drums
+        lay.addWidget(self._caption("ÜBERSPRECHEN"))
+        self.bleed_switch = SegmentSwitch([("Aus", "off"), ("Leicht", "light"), ("Stark", "strong")], "off")
+        self.bleed_switch.setToolTip("Dämpft in jeder Spur, was hörbar zu einer anderen Spur gehört. Stark = trockener, leise Ausklänge können dünner werden.")
+        lay.addWidget(self.bleed_switch)
+        lay.addSpacing(8)
+        self.bleed_switch.group.buttonClicked.connect(lambda _b: self._update_main_buttons())
+        self.model_box.currentIndexChanged.connect(lambda _i: self._update_main_buttons())
+
         # optional: regenerate missing highs/details per stem after separating
         self.restore_btn = QPushButton("Apollo · Fehlendes ergänzen")
         self.restore_btn.setObjectName("toggle")
         self.restore_btn.setCheckable(True)
         self.restore_btn.setToolTip("Repariert jede Spur nach dem Trennen: ergänzt fehlende Höhen und Details. Dauert länger.")
+        self.restore_btn.toggled.connect(lambda _on: self._update_main_buttons())
         has_restorer = any(r.is_available() for r in discover_restorers().values())
         restore_caption = self._caption("REPARIEREN")
         for w in (restore_caption, self.restore_btn):
@@ -1107,9 +1143,8 @@ class MainWindow(QMainWindow):
             w.setEnabled(has_audio)
         for w in (self.export_btn, self.folder_btn, self.mix_grip, self.single_grip):
             w.setEnabled(loaded)
-        self.export_btn.setVisible(loaded)
-        self.separate_btn.setVisible(not loaded)
         self.separate_btn.setEnabled(self.source is not None and self._thread is None)
+        self._update_main_buttons()
 
     # ---- separation
     def choose_file(self) -> None:
@@ -1149,7 +1184,8 @@ class MainWindow(QMainWindow):
 
         self._thread = QThread(self)
         self._restoring = self.restore_btn.isChecked() and not self.restore_btn.isHidden()
-        self._worker = SeparateWorker(self.source, self.model_box.currentData(), self._restoring)
+        self._pending_key = self._separation_key()
+        self._worker = SeparateWorker(self.source, self.model_box.currentData(), self._restoring, self.bleed_switch.currentData())
         self._worker.progress.connect(self.on_progress)
         self._worker.moveToThread(self._thread)
         self._thread.started.connect(self._worker.run)
@@ -1197,6 +1233,7 @@ class MainWindow(QMainWindow):
         self.player.load(self.stems)
         self.player.seek(pos)
         self.wave.set_stems(self.stems)
+        self._separated_with = getattr(self, "_pending_key", None) or self._separation_key()
         self._set_loaded(True)
         folder = next(iter(self.stems.values())).parent
         self.status.setText("Klick auf den Namen: Spur an/aus · S: nur diese Spur · Griff rechts: Spur nach Ableton ziehen")
@@ -1472,6 +1509,25 @@ class UpdateWorker(QObject):
             self.installed.emit(rel.version, "")
         except Exception as exc:
             self.installed.emit(rel.version, str(exc))
+
+
+def download_icon(color: str) -> "QIcon":
+    """Small arrow into a tray, drawn so it matches the text colour of the button."""
+    from PySide6.QtGui import QIcon, QPixmap
+
+    pm = QPixmap(28, 28)
+    pm.fill(Qt.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.Antialiasing)
+    pen = QPen(QColor(color), 3)
+    pen.setCapStyle(Qt.RoundCap)
+    pen.setJoinStyle(Qt.RoundJoin)
+    p.setPen(pen)
+    p.drawLine(14, 3, 14, 17)
+    p.drawPolyline([QPointF(8, 11), QPointF(14, 17), QPointF(20, 11)])
+    p.drawPolyline([QPointF(4, 18), QPointF(4, 24), QPointF(24, 24), QPointF(24, 18)])
+    p.end()
+    return QIcon(pm)
 
 
 class GearButton(QPushButton):

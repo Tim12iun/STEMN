@@ -6,7 +6,8 @@ Only listens on 127.0.0.1. Keeps the model in memory between requests.
     GET  /models                -> [{"id": ..., "stems": [...]}, ...]
     POST /separate              <- {"input": "/abs/path.wav", "stems": ["kick"],
                                     "model": null, "output_dir": null,
-                                    "quality": "normal", "restore": false}
+                                    "quality": "normal", "restore": false,
+                                    "bleed": "off"}
                                 -> {"stems": {"kick": "/abs/path - kick.wav"}}
 """
 
@@ -53,7 +54,7 @@ def make_handler(engine):
                 stems = req.get("stems")
                 if isinstance(stems, str):
                     stems = [s for s in stems.split(",") if s]
-                out = engine.separate(req["input"], stems=stems, model_id=req.get("model"), output_dir=req.get("output_dir"), quality=req.get("quality") or "best", restore=bool(req.get("restore")))
+                out = engine.separate(req["input"], stems=stems, model_id=req.get("model"), output_dir=req.get("output_dir"), quality=req.get("quality") or "best", restore=bool(req.get("restore")), bleed=req.get("bleed") or "off")
                 return self._send(200, {"stems": {k: str(v) for k, v in out.items()}})
             except (ModelError, FileNotFoundError, ValueError) as exc:
                 return self._send(400, {"error": str(exc)})

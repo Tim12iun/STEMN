@@ -129,16 +129,22 @@ class Engine:
         quality: str = "best",
         progress=None,
         restore: bool = False,
+        bleed: str = "off",
     ) -> dict[str, Path]:
         """Separate ``input_path``; return ``{canonical_stem: wav_path}``.
 
         ``stems`` limits the files written (e.g. ``["kick"]``); ``None`` writes all.
         ``progress`` is called with values from 0 to 1.
         ``restore`` runs the restoration model (Apollo) on every stem afterwards.
+        ``bleed`` ("off", "light", "strong") damps cross-talk between the stems first.
         """
         report = progress or (lambda _v: None)
         report(0.0)
         overlap = self._overlap(quality)
+        from .bleed import BLEED_POWER
+
+        if bleed not in BLEED_POWER:
+            raise ValueError(f"Uebersprechen '{bleed}' unbekannt ({', '.join(BLEED_POWER)})")
         input_path = Path(input_path).expanduser().resolve()
         if not input_path.is_file():
             raise FileNotFoundError(f"Datei nicht gefunden: {input_path}")
@@ -167,6 +173,8 @@ class Engine:
             report(split_end)
 
             raw_files = {canonical_stem(p.stem.removeprefix("stem_")): p for p in work.glob("stem_*")}
+            if bleed != "off":
+                raw_files = _reduce_bleed_files(raw_files, bleed)
             if restorer:
                 todo = [s for s in raw_files if wanted is None or s in wanted or any(s in VIRTUAL_STEMS.get(w, ()) for w in wanted)]
                 span = (0.95 - split_end) / max(len(todo), 1)
@@ -196,6 +204,21 @@ class Engine:
 
         report(1.0)
         return result
+
+
+def _reduce_bleed_files(raw_files: dict[str, Path], level: str) -> dict[str, Path]:
+    from .bleed import reduce_bleed
+
+    audio, rate = {}, None
+    for stem, path in raw_files.items():
+        audio[stem], rate = sf.read(str(path), dtype="float32", always_2d=True)
+    cleaned = reduce_bleed(audio, level)
+    out = {}
+    for stem, path in raw_files.items():
+        target = path.with_name(path.stem + "_clean.wav")
+        sf.write(str(target), cleaned[stem], rate, subtype="FLOAT")
+        out[stem] = target
+    return out
 
 
 @contextmanager
@@ -238,7 +261,7 @@ def default_engine() -> Engine:
     return _default_engine
 
 
-def separate(input_path, stems=None, model_id=None, output_dir=None, quality="best", progress=None, restore=False) -> dict[str, Path]:
+def separate(input_path, stems=None, model_id=None, output_dir=None, quality="best", progress=None, restore=False, bleed="off") -> dict[str, Path]:
     return default_engine().separate(
-        input_path, stems=stems, model_id=model_id, output_dir=output_dir, quality=quality, progress=progress, restore=restore
+        input_path, stems=stems, model_id=model_id, output_dir=output_dir, quality=quality, progress=progress, restore=restore, bleed=bleed
     )

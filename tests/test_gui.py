@@ -178,3 +178,12 @@ def test_gear_shows_dot_when_update_is_waiting(window):
     assert not window.gear_btn.badge
     window.update_changed.disconnect(dlg.refresh)
     dlg.deleteLater()
+
+
+def test_separate_stays_visible_and_glows_only_when_needed(window):
+    assert window.separate_btn.isVisibleTo(window) and window.export_btn.isVisibleTo(window)
+    assert window.separate_btn.property("lit") is False and window.export_btn.property("lit") is True
+    window.bleed_switch.group.button(2).click()  # a setting that needs a new separation
+    assert window.separate_btn.property("lit") is True and window.export_btn.property("lit") is False
+    window.bleed_switch.group.button(0).click()  # back to what the stems were made with
+    assert window.separate_btn.property("lit") is False
