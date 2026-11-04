@@ -54,7 +54,6 @@ ACCENT = "#FF5A1F"
 BG, SURFACE, RAISED, RAISED2, LINE = "#141414", "#1C1B1A", "#232221", "#2A2928", "#32312F"
 TEXT, MUTED, DANGER = "#F0EEE9", "#8F8C86", "#B5483B"
 FONT_FAMILY = "Barlow Condensed"
-QUALITIES = [("Schnell", "fast"), ("Normal", "normal"), ("Beste", "best")]
 GAIN_MIN_DB, GAIN_MAX_DB = -30.0, 6.0
 ENVELOPE_BINS = 4096
 
@@ -131,11 +130,19 @@ def fmt_time(seconds: float) -> str:
 
 
 class Player:
-    """Loops the stems in sync; gain/mute/solo changes take effect immediately."""
+    """Loops the stems in sync; gain/mute/solo changes take effect immediately.
+
+    All tracks stay in memory. Whenever a gain changes the mix is computed once
+    in the window thread; the audio callback only copies from that buffer, so
+    playback stays smooth even while the window redraws or a separation runs.
+    """
+
+    BLOCK = 1024
 
     def __init__(self) -> None:
         self.tracks: dict[str, np.ndarray] = {}
         self.gains: dict[str, float] = {}
+        self.mix = np.zeros((0, 2), np.float32)
         self.sr = 44100
         self.pos = 0
         self.length = 0
@@ -151,17 +158,33 @@ class Player:
             audio, sr = sf.read(str(path), dtype="float32", always_2d=True)
             if audio.shape[1] == 1:
                 audio = np.repeat(audio, 2, axis=1)
-            tracks[stem] = audio[:, :2]
+            tracks[stem] = np.ascontiguousarray(audio[:, :2])
             self.sr = sr
+        length = min((len(a) for a in tracks.values()), default=0)
+        self.tracks = {k: a[:length] for k, a in tracks.items()}
+        self.gains = {k: 1.0 for k in tracks}
+        mix = self._render()
         with self._lock:
-            self.tracks = tracks
-            self.gains = {k: 1.0 for k in tracks}
-            self.length = min((len(a) for a in tracks.values()), default=0)
-            self.pos = 0
+            self.mix, self.length, self.pos = mix, length, 0
+
+    def _render(self) -> np.ndarray:
+        mix = None
+        for stem, audio in self.tracks.items():
+            g = self.gains.get(stem, 0.0)
+            if g:
+                mix = audio * g if mix is None else mix + audio * g
+        if mix is None:
+            length = min((len(a) for a in self.tracks.values()), default=0)
+            mix = np.zeros((length, 2), np.float32)
+        return mix
 
     def set_gains(self, gains: dict[str, float]) -> None:
+        if all(self.gains.get(k) == v for k, v in gains.items()):
+            return
+        self.gains.update(gains)
+        mix = self._render()
         with self._lock:
-            self.gains.update(gains)
+            self.mix = mix
 
     def seek(self, frame: int) -> None:
         with self._lock:
@@ -169,19 +192,30 @@ class Player:
 
     def _callback(self, out, frames, _time, _status):
         with self._lock:
-            out.fill(0)
-            if not self.length:
+            mix, length, pos = self.mix, self.length, self.pos
+            if not length:
+                out.fill(0)
                 return
             written = 0
             while written < frames:
-                n = min(frames - written, self.length - self.pos)
-                for stem, audio in self.tracks.items():
-                    g = self.gains.get(stem, 0.0)
-                    if g:
-                        out[written : written + n] += g * audio[self.pos : self.pos + n]
+                n = min(frames - written, length - pos)
+                out[written : written + n] = mix[pos : pos + n]
                 written += n
-                self.pos = (self.pos + n) % self.length
-            self.peak = max(self.peak * 0.85, float(np.abs(out).max()) if frames else 0.0)
+                pos = (pos + n) % length
+            self.pos = pos
+        self.peak = max(self.peak * 0.85, float(np.abs(out).max()) if frames else 0.0)
+
+    @property
+    def heard_pos(self) -> int:
+        """Position that is actually audible now (the device buffer is ahead of it)."""
+        pos = self.pos
+        if self.stream is not None and self.length:
+            try:
+                pos -= int(float(self.stream.latency) * self.sr)
+            except Exception:
+                pass
+            pos %= self.length
+        return pos
 
     @property
     def playing(self) -> bool:
@@ -193,7 +227,14 @@ class Player:
         try:
             import sounddevice as sd
 
-            self.stream = sd.OutputStream(samplerate=self.sr, channels=2, dtype="float32", callback=self._callback)
+            self.stream = sd.OutputStream(
+                samplerate=self.sr,
+                channels=2,
+                dtype="float32",
+                blocksize=self.BLOCK,
+                latency="high",
+                callback=self._callback,
+            )
             self.stream.start()
             return True
         except Exception as exc:  # no audio device / PortAudio missing
@@ -218,7 +259,10 @@ class Player:
 # --------------------------------------------------------------------------- worker
 
 
-def separate_command(path: Path, model_id: str | None, quality: str, result_file: Path) -> list[str]:
+QUALITY = "best"  # the app always separates in the best quality
+
+
+def separate_command(path: Path, model_id: str | None, result_file: Path, progress_file: Path) -> list[str]:
     """Command line that runs one separation in its own process.
 
     A crash deep inside torch (native abort) then only ends that process,
@@ -228,41 +272,63 @@ def separate_command(path: Path, model_id: str | None, quality: str, result_file
         cmd = [sys.executable, "separate"]
     else:
         cmd = [sys.executable, "-m", "stemn.cli", "separate"]
-    cmd += [str(path), "-q", quality, "--result-file", str(result_file)]
+    cmd += [str(path), "-q", QUALITY, "--result-file", str(result_file), "--progress-file", str(progress_file)]
     if model_id:
         cmd += ["-m", model_id]
     return cmd
 
 
-def run_separation(path: Path, model_id: str | None, quality: str) -> dict:
-    """Run the separation in a child process. Returns {stem: path} or raises RuntimeError."""
+def _read_progress(path: Path) -> float | None:
+    try:
+        return min(max(float(path.read_text(encoding="utf-8")), 0.0), 1.0)
+    except (OSError, ValueError):
+        return None
+
+
+def run_separation(path: Path, model_id: str | None, progress=None) -> dict:
+    """Run the separation in a child process. Returns {stem: path} or raises RuntimeError.
+
+    ``progress`` (optional) is called with values from 0 to 1 while it runs.
+    """
     import json
     import subprocess
     import tempfile
+    import time
 
     with tempfile.TemporaryDirectory(prefix="stemn-") as tmp:
         result_file = Path(tmp) / "result.json"
+        progress_file = Path(tmp) / "progress.txt"
+        stderr_file = Path(tmp) / "stderr.txt"
         kwargs = {}
         if sys.platform == "win32":
             kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-        proc = subprocess.run(
-            separate_command(path, model_id, quality, result_file),
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
-            **kwargs,
-        )
+        with open(stderr_file, "wb") as err:
+            proc = subprocess.Popen(
+                separate_command(path, model_id, result_file, progress_file),
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=err,
+                **kwargs,
+            )
+            last = None
+            while proc.poll() is None:
+                value = _read_progress(progress_file)
+                if progress and value is not None and value != last:
+                    progress(value)
+                    last = value
+                time.sleep(0.15)
         data = {}
         if result_file.is_file():
             try:
                 data = json.loads(result_file.read_text(encoding="utf-8"))
             except ValueError:
                 data = {}
+        stderr = stderr_file.read_bytes() if stderr_file.is_file() else b""
     if "error" in data:
         raise RuntimeError(data["error"])
     if proc.returncode == 0 and "stems" in data:
         return next(iter(data["stems"].values()), {})
-    tail = (proc.stderr or b"").decode("utf-8", "replace").strip().splitlines()[-3:]
+    tail = stderr.decode("utf-8", "replace").strip().splitlines()[-3:]
     detail = ("\n" + "\n".join(tail)) if tail else ""
     raise RuntimeError(f"Die Trennung ist abgestuerzt (Code {proc.returncode}).{detail}")
 
@@ -270,14 +336,15 @@ def run_separation(path: Path, model_id: str | None, quality: str) -> dict:
 class SeparateWorker(QObject):
     finished = Signal(dict)
     failed = Signal(str)
+    progress = Signal(float)
 
-    def __init__(self, path: Path, model_id: str | None, quality: str) -> None:
+    def __init__(self, path: Path, model_id: str | None) -> None:
         super().__init__()
-        self.path, self.model_id, self.quality = path, model_id, quality
+        self.path, self.model_id = path, model_id
 
     def run(self) -> None:
         try:
-            self.finished.emit(run_separation(self.path, self.model_id, self.quality))
+            self.finished.emit(run_separation(self.path, self.model_id, self.progress.emit))
         except Exception as exc:
             self.failed.emit(str(exc))
 
@@ -513,6 +580,8 @@ class WaveformView(QWidget):
         self.position = 0.0
         self.duration = 0.0
         self.message = "Drum-Loop hierher ziehen\noder oben auf „Öffnen“ klicken"
+        self.progress: float | None = None  # set while separating
+        self.busy_text = ""
         self._hover = False
         self._paths: dict[str, QPainterPath] = {}
         self._paths_size = None
@@ -532,10 +601,26 @@ class WaveformView(QWidget):
         self.draw_order = sorted(envs, key=lambda s: energy[s], reverse=True)  # loud ones at the back
         self.active = set(envs)
         self.message = ""
+        self.progress = None
         self._paths_size = None
         self.update()
 
+    def set_source(self, path: Path) -> None:
+        """Show the dropped loop (grey) right away, with the progress bar on top."""
+        try:
+            self.set_stems({"_source": path})
+        except Exception:
+            self.clear("")
+        self.position = 0.0
+        self.set_progress(0.0, "Modell wird geladen")
+
+    def set_progress(self, value: float, text: str) -> None:
+        self.progress = min(max(value, 0.0), 1.0)
+        self.busy_text = text
+        self.update()
+
     def clear(self, message: str) -> None:
+        self.progress = None
         self.envelopes, self.draw_order, self.active = {}, [], set()
         self.position = 0.0
         self.duration = 0.0
@@ -563,8 +648,22 @@ class WaveformView(QWidget):
         self._paths_size = (w, h)
 
     # painting
-    def paintEvent(self, _e):
-        p = QPainter(self)
+    def _static_key(self):
+        return (self.width(), self.height(), self.devicePixelRatioF(), tuple(self.draw_order), frozenset(self.active), self.duration)
+
+    def _render_static(self):
+        """Background, grid and all waveforms, drawn once into a pixmap.
+
+        While playing only this picture and the playhead are drawn, which keeps
+        the window light so playback does not stutter.
+        """
+        from PySide6.QtGui import QPixmap
+
+        dpr = self.devicePixelRatioF()
+        pix = QPixmap(int(self.width() * dpr), int(self.height() * dpr))
+        pix.setDevicePixelRatio(dpr)
+        pix.fill(Qt.transparent)
+        p = QPainter(pix)
         p.setRenderHint(QPainter.Antialiasing)
         r = self.rect()
         bg = QPainterPath()
@@ -572,7 +671,6 @@ class WaveformView(QWidget):
         p.setClipPath(bg)
         p.fillRect(r, QColor(SURFACE))
         mid = r.height() / 2
-
         if self.duration > 0:  # time grid
             step = 1.0 if self.duration <= 20 else 5.0
             t = step
@@ -585,6 +683,27 @@ class WaveformView(QWidget):
                 t += step
         p.setPen(QPen(QColor(LINE), 1))
         p.drawLine(QPointF(0, mid), QPointF(r.width(), mid))
+        if self.envelopes:
+            if self._paths_size != (r.width(), r.height()):
+                self._build_paths()
+            for stem in self.draw_order:
+                color = QColor(STEM_COLORS.get(stem, MUTED))
+                if stem in self.active:
+                    color.setAlpha(215)
+                else:
+                    color = QColor(50, 49, 47, 160)
+                p.fillPath(self._paths[stem], color)
+        p.end()
+        self._static = pix
+        self._static_for = self._static_key()
+
+    def paintEvent(self, _e):
+        if getattr(self, "_static_for", None) != self._static_key():
+            self._render_static()
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        r = self.rect()
+        p.drawPixmap(0, 0, self._static)
 
         if self._hover:
             p.fillRect(r.adjusted(4, 4, -4, -4), QColor(255, 90, 31, 18))
@@ -593,20 +712,13 @@ class WaveformView(QWidget):
 
         if self.message:
             p.setPen(QColor(MUTED))
-            f = QFont(FONT_FAMILY, 17, QFont.Medium)
-            p.setFont(f)
+            p.setFont(QFont(FONT_FAMILY, 17, QFont.Medium))
             p.drawText(r, Qt.AlignCenter, self.message)
+        if self.progress is not None:
+            self._paint_progress(p, r)
             return
-
-        if self._paths_size != (r.width(), r.height()):
-            self._build_paths()
-        for stem in self.draw_order:
-            color = QColor(STEM_COLORS.get(stem, MUTED))
-            if stem in self.active:
-                color.setAlpha(215)
-            else:
-                color = QColor(50, 49, 47, 160)
-            p.fillPath(self._paths[stem], color)
+        if not self.envelopes:
+            return
 
         x = self.position * r.width()  # playhead
         p.setPen(QPen(QColor(ACCENT), 1.5))
@@ -615,9 +727,30 @@ class WaveformView(QWidget):
         p.setBrush(QColor(ACCENT))
         p.drawEllipse(QPointF(x, 6), 4, 4)
 
+    def _paint_progress(self, p: QPainter, r) -> None:
+        dim = QPainterPath()
+        dim.addRoundedRect(QRectF(r), 12, 12)
+        p.fillPath(dim, QColor(20, 20, 20, 150))  # dim the loop underneath
+        w = min(380.0, r.width() - 80.0)
+        box = QRectF(r.center().x() - w / 2 - 20, r.center().y() - 38, w + 40, 76)
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor(RAISED))
+        p.drawRoundedRect(box, 10, 10)
+        p.setPen(QColor(TEXT))
+        p.setFont(QFont(FONT_FAMILY, 15, QFont.DemiBold))
+        p.drawText(QRectF(box.left() + 20, box.top() + 12, w * 0.7, 24), Qt.AlignLeft | Qt.AlignVCenter, self.busy_text)
+        p.setFont(tabular_font(15))
+        p.drawText(QRectF(box.left() + 20, box.top() + 12, w, 24), Qt.AlignRight | Qt.AlignVCenter, f"{round(self.progress * 100)} %")
+        bar = QRectF(box.left() + 20, box.top() + 48, w, 6)
+        p.setBrush(QColor(LINE))
+        p.drawRoundedRect(bar, 3, 3)
+        if self.progress > 0:
+            p.setBrush(QColor(ACCENT))
+            p.drawRoundedRect(QRectF(bar.left(), bar.top(), max(bar.width() * self.progress, 6), bar.height()), 3, 3)
+
     # interaction
     def mousePressEvent(self, e):
-        if self.envelopes:
+        if self.envelopes and self.progress is None:
             self.seek.emit(min(max(e.position().x() / max(self.width(), 1), 0.0), 1.0))
 
     def mouseMoveEvent(self, e):
@@ -782,13 +915,22 @@ class MainWindow(QMainWindow):
         self.folder_btn.setToolTip("Ordner mit allen Spuren öffnen")
         self.folder_btn.clicked.connect(self.open_folder)
         self.mix_grip = DragGrip("⠿ Mix ziehen", self.export_mix, "Alle hörbaren Spuren als eine Datei in Ableton ziehen")
+        self.separate_btn = QPushButton("TRENNEN")
+        self.separate_btn.setObjectName("primary")
+        self.separate_btn.setToolTip("Loop in Kick, Snare, Hi-Hat, Toms, Ride und Crash zerlegen · ⌘T")
+        self.separate_btn.setShortcut("Ctrl+T")
+        self.separate_btn.clicked.connect(self.separate_current)
         self.export_btn = QPushButton("EXPORTIEREN")
         self.export_btn.setObjectName("primary")
         self.export_btn.setToolTip("Hörbaren Mix mit den eingestellten Pegeln als WAV speichern · ⌘E")
         self.export_btn.setShortcut("Ctrl+E")
         self.export_btn.clicked.connect(self.export_dialog)
-        for w in (self.import_btn, self.folder_btn, self.mix_grip, self.export_btn):
+        for w in (self.import_btn, self.folder_btn, self.mix_grip, self.separate_btn, self.export_btn):
             lay.addWidget(w)
+        # TRENNEN and EXPORTIEREN share one place: only one orange main action at a time
+        width = max(self.separate_btn.sizeHint().width(), self.export_btn.sizeHint().width())
+        self.separate_btn.setFixedWidth(width)
+        self.export_btn.setFixedWidth(width)
         return bar
 
     def _build_panel(self) -> QFrame:
@@ -814,11 +956,6 @@ class MainWindow(QMainWindow):
         lay.addWidget(self.model_box)
         lay.addSpacing(8)
 
-        lay.addWidget(self._caption("QUALITÄT"))
-        self.quality_box = SegmentSwitch(QUALITIES, default="normal")
-        lay.addWidget(self.quality_box)
-        lay.addSpacing(8)
-
         lay.addWidget(self._caption("SPUREN"))
         self.rows_box = QVBoxLayout()
         self.rows_box.setSpacing(4)
@@ -839,8 +976,15 @@ class MainWindow(QMainWindow):
         return lbl
 
     def _set_loaded(self, loaded: bool) -> None:
-        for w in (self.play_btn, self.to_start_btn, self.export_btn, self.folder_btn, self.mix_grip):
+        """loaded = stems exist. Before that only the loop itself can be played."""
+        has_audio = loaded or self.player.length > 0
+        for w in (self.play_btn, self.to_start_btn):
+            w.setEnabled(has_audio)
+        for w in (self.export_btn, self.folder_btn, self.mix_grip):
             w.setEnabled(loaded)
+        self.export_btn.setVisible(loaded)
+        self.separate_btn.setVisible(not loaded)
+        self.separate_btn.setEnabled(self.source is not None and self._thread is None)
 
     # ---- separation
     def choose_file(self) -> None:
@@ -849,20 +993,38 @@ class MainWindow(QMainWindow):
             self.start(Path(f))
 
     def start(self, path: Path) -> None:
+        """Load a dropped/opened loop: show it and make it playable. Separation comes with TRENNEN."""
         if self._thread is not None:
             return
-        self.player.stop()
-        self.play_btn.setChecked(False)
-        self.play_btn.setText("▶")
+        self._stop_playback()
         self.source = path
         self.clear_rows()
         self.file_label.setText(path.name)
-        self.wave.clear("Trenne Spuren …")
-        self.status.setText("Das dauert je nach Rechner ein paar Sekunden.")
+        try:
+            self.player.load({"_source": path})
+            self.wave.set_stems({"_source": path})
+        except Exception as exc:
+            self.source = None
+            self.player.load({})
+            self.wave.clear("Datei lässt sich nicht lesen.\nAnderen Loop reinziehen.")
+            self.status.setText(str(exc))
+            self._set_loaded(False)
+            return
+        self.wave.position = 0.0
+        self._set_loaded(False)
+        self.status.setText("Leertaste spielt den Loop · TRENNEN zerlegt ihn in Spuren (beste Qualität)")
+
+    def separate_current(self) -> None:
+        if self._thread is not None or self.source is None:
+            return
+        self.wave.set_progress(0.0, "Modell wird geladen")
+        self.status.setText("Trennt in bester Qualität · der Loop lässt sich währenddessen weiter abspielen")
         self.import_btn.setEnabled(False)
+        self.separate_btn.setEnabled(False)
 
         self._thread = QThread(self)
-        self._worker = SeparateWorker(path, self.model_box.currentData(), self.quality_box.currentData())
+        self._worker = SeparateWorker(self.source, self.model_box.currentData())
+        self._worker.progress.connect(self.on_progress)
         self._worker.moveToThread(self._thread)
         self._thread.started.connect(self._worker.run)
         self._worker.finished.connect(self.on_done)
@@ -872,13 +1034,24 @@ class MainWindow(QMainWindow):
         self._thread.finished.connect(self._cleanup_thread)
         self._thread.start()
 
+    def _stop_playback(self) -> None:
+        self.player.stop()
+        self.play_btn.setChecked(False)
+        self.play_btn.setText("▶")
+
+    def on_progress(self, value: float) -> None:
+        text = "Modell wird geladen" if value < 0.08 else "Trenne Spuren" if value < 0.95 else "Spuren werden gespeichert"
+        self.wave.set_progress(value, text)
+
     def _cleanup_thread(self) -> None:
         self._thread = None
         self.import_btn.setEnabled(True)
+        self.separate_btn.setEnabled(self.source is not None)
 
     def on_failed(self, msg: str) -> None:
-        self.wave.clear("Fehler beim Trennen.\nAnderen Loop reinziehen.")
-        self.status.setText(msg)
+        self.wave.progress = None
+        self.wave.update()
+        self.status.setText(f"Fehler beim Trennen: {msg}")
         QMessageBox.warning(self, "stemn", msg)
 
     def on_done(self, stems: dict) -> None:
@@ -889,7 +1062,11 @@ class MainWindow(QMainWindow):
             row.changed.connect(self.update_gains)
             self.rows_box.addWidget(row)
             self.rows.append(row)
+        was_playing = self.player.playing
+        pos = self.player.pos
+        self._stop_playback()
         self.player.load(self.stems)
+        self.player.seek(pos)
         self.wave.set_stems(self.stems)
         self._set_loaded(True)
         folder = next(iter(self.stems.values())).parent
@@ -897,6 +1074,8 @@ class MainWindow(QMainWindow):
         if self.source:
             self.file_label.setText(self.source.name)
         self.update_gains()
+        if was_playing:
+            self.toggle_play()
 
     def clear_rows(self) -> None:
         for row in self.rows:
@@ -919,6 +1098,8 @@ class MainWindow(QMainWindow):
         return {r.stem: db_to_gain(r.gain_db) if r.stem in on else 0.0 for r in self.rows}
 
     def update_gains(self) -> None:
+        if not self.rows:  # only the original loop is loaded
+            return
         gains = self.current_gains()
         self.player.set_gains(gains)
         self.wave.active = {s for s, g in gains.items() if g > 0}
@@ -951,7 +1132,7 @@ class MainWindow(QMainWindow):
         if not length:
             self.time.setText("0:00.0 / 0:00.0")
             return
-        pos = self.player.pos
+        pos = self.player.heard_pos
         if pos == self._last_pos:
             return
         self._last_pos = pos

@@ -12,7 +12,8 @@ Status: App mit Oberflaeche (Mac und Windows). Das Max-for-Live-Device folgt.
    - **Mac:** `stemn.app` in den Programme-Ordner ziehen. Beim ersten Start blockiert macOS die App, weil sie nicht signiert ist:
      Rechtsklick auf die App → *Oeffnen* → *Oeffnen*, oder im Terminal `xattr -dr com.apple.quarantine /Applications/stemn.app`.
    - **Windows:** Ordner `stemn` irgendwohin legen, `stemn.exe` starten. Bei der SmartScreen-Warnung *Weitere Informationen* → *Trotzdem ausfuehren*.
-3. Drum-Loop ins Fenster ziehen. Nach der Trennung:
+3. Drum-Loop ins Fenster ziehen. Er wird sofort angezeigt und laesst sich mit der Leertaste abspielen.
+4. **TRENNEN** druecken. Ein Balken zeigt den Fortschritt, getrennt wird immer in bester Qualitaet. Danach:
    - **M** schaltet eine Spur stumm, **S** spielt sie solo, **Abspielen** spielt alles synchron als Loop.
    - **Griff rechts** an jeder Spur (Feld mit Punkten) greifen und ziehen: die Spur direkt in Ableton ins Arrangement oder auf eine Spur ziehen.
    - **⠿ Mix ziehen**: alle gerade hoerbaren Spuren zusammen als eine Datei ziehen (z.B. Loop ohne Kick).
@@ -26,7 +27,7 @@ Eingangsformate: WAV, AIFF, FLAC.
 ```bash
 stemn separate "Loop.wav"                 # alle Stems
 stemn separate "Loop.wav" -s kick         # nur die Kick
-stemn separate "Loop.wav" -q fast         # schneller (fast / normal / best)
+stemn separate "Loop.wav" -q fast         # schneller (fast / normal / best, Standard: best)
 stemn models list                         # Modelle anzeigen
 stemn serve                               # Dienst fuer Max for Live (Port 47800)
 ```

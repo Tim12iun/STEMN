@@ -70,7 +70,7 @@ jobs:
           plutil -replace CFBundleShortVersionString -string "$v" dist/stemn.app/Contents/Info.plist
           plutil -replace CFBundleVersion -string "$v" dist/stemn.app/Contents/Info.plist
           codesign --force --deep -s - dist/stemn.app
-          plutil -p dist/stemn.app/Contents/Info.plist | grep -i version
+          plutil -p dist/stemn.app/Contents/Info.plist | grep -iE "version|icon"
       - name: Smoke-Test
         shell: bash
         env:

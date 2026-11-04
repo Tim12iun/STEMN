@@ -10,6 +10,7 @@ import logging
 import re
 import tempfile
 import threading
+from contextlib import contextmanager
 from pathlib import Path
 
 import numpy as np
@@ -104,12 +105,16 @@ class Engine:
         stems: list[str] | None = None,
         model_id: str | None = None,
         output_dir: str | Path | None = None,
-        quality: str = "normal",
+        quality: str = "best",
+        progress=None,
     ) -> dict[str, Path]:
         """Separate ``input_path``; return ``{canonical_stem: wav_path}``.
 
         ``stems`` limits the files written (e.g. ``["kick"]``); ``None`` writes all.
+        ``progress`` is called with values from 0 to 1.
         """
+        report = progress or (lambda _v: None)
+        report(0.0)
         overlap = self._overlap(quality)
         input_path = Path(input_path).expanduser().resolve()
         if not input_path.is_file():
@@ -130,8 +135,11 @@ class Engine:
         with self._lock, tempfile.TemporaryDirectory(prefix="stemn-") as tmp:
             work = Path(tmp)
             separator = self._load(spec, work, overlap)
+            report(0.08)
             names = {raw: f"stem_{canonical_stem(raw)}" for raw in spec.stems}
-            separator.separate(str(input_path), custom_output_names=names)
+            with _track_chunks(report, 0.08, 0.95):
+                separator.separate(str(input_path), custom_output_names=names)
+            report(0.95)
 
             raw_files = {canonical_stem(p.stem.removeprefix("stem_")): p for p in work.glob("stem_*")}
             result: dict[str, Path] = {}
@@ -154,7 +162,38 @@ class Engine:
                 sf.write(str(tmp_mix), mix, sf.info(str(raw_files[parts[0]])).samplerate, subtype="FLOAT")
                 result[virtual] = conform(tmp_mix, reference, out_dir / f"{base} - {virtual}.wav")
 
+        report(1.0)
         return result
+
+
+@contextmanager
+def _track_chunks(report, start: float, end: float):
+    """Report progress while audio-separator works through its chunks.
+
+    audio-separator counts its chunks with tqdm; stemn swaps that counter for
+    one that calls ``report``.
+    """
+    try:
+        from audio_separator.separator.architectures import mdxc_separator as module
+    except Exception:  # pragma: no cover - other architectures: no fine progress
+        yield
+        return
+
+    original = module.tqdm
+
+    def counting(iterable, *args, **kwargs):
+        items = list(iterable)
+        total = max(len(items), 1)
+        for i, item in enumerate(items):
+            report(start + (end - start) * i / total)
+            yield item
+        report(end)
+
+    module.tqdm = counting
+    try:
+        yield
+    finally:
+        module.tqdm = original
 
 
 _default_engine: Engine | None = None
@@ -167,5 +206,7 @@ def default_engine() -> Engine:
     return _default_engine
 
 
-def separate(input_path, stems=None, model_id=None, output_dir=None, quality="normal") -> dict[str, Path]:
-    return default_engine().separate(input_path, stems=stems, model_id=model_id, output_dir=output_dir, quality=quality)
+def separate(input_path, stems=None, model_id=None, output_dir=None, quality="best", progress=None) -> dict[str, Path]:
+    return default_engine().separate(
+        input_path, stems=stems, model_id=model_id, output_dir=output_dir, quality=quality, progress=progress
+    )

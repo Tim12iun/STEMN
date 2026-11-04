@@ -16,8 +16,9 @@ def _cmd_separate(args) -> int:
 
     stems = [s for s in args.stems.split(",") if s] if args.stems else None
     results = {}
+    progress = _progress_writer(args.progress_file) if args.progress_file else None
     for path in args.input:
-        out = separate(path, stems=stems, model_id=args.model, output_dir=args.output, quality=args.quality)
+        out = separate(path, stems=stems, model_id=args.model, output_dir=args.output, quality=args.quality, progress=progress)
         results[str(path)] = {k: str(v) for k, v in out.items()}
         if not args.json:
             print(f"{path}:")
@@ -28,6 +29,18 @@ def _cmd_separate(args) -> int:
     if args.result_file:
         _write_result(args.result_file, {"stems": results})
     return 0
+
+
+def _progress_writer(path: str):
+    target = Path(path)
+
+    def write(value: float) -> None:
+        try:
+            target.write_text(f"{value:.3f}", encoding="utf-8")
+        except OSError:
+            pass
+
+    return write
 
 
 def _write_result(path: str, data: dict) -> None:
@@ -97,9 +110,10 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("-s", "--stems", help="nur diese Stems, z.B. kick,snare (Standard: alle)")
     s.add_argument("-m", "--model", help="Modell-ID (siehe 'stemn models list')")
     s.add_argument("-o", "--output", help="Zielordner (Standard: '<Datei> stems' daneben)")
-    s.add_argument("-q", "--quality", default="normal", choices=["fast", "normal", "best"], help="Tempo/Qualitaet (Standard: normal)")
+    s.add_argument("-q", "--quality", default="best", choices=["fast", "normal", "best"], help="Tempo/Qualitaet (Standard: best)")
     s.add_argument("--json", action="store_true", help="Ergebnis als JSON ausgeben")
     s.add_argument("--result-file", help=argparse.SUPPRESS)  # used by the app window
+    s.add_argument("--progress-file", help=argparse.SUPPRESS)  # used by the app window
     s.set_defaults(func=_cmd_separate)
 
     m = sub.add_parser("models", help="Modelle anzeigen oder importieren")
