@@ -1058,7 +1058,7 @@ class MainWindow(QMainWindow):
         self.export_btn.clicked.connect(self.export_dialog)
         self.gear_btn = GearButton()
         self.gear_btn.clicked.connect(self.open_settings)
-        for w in (self.import_btn, self.folder_btn, self.mix_grip, self.single_grip, self.separate_btn, self.export_btn):
+        for w in (self.import_btn, self.folder_btn, self.mix_grip, self.single_grip, self.export_btn, self.separate_btn):
             lay.addWidget(w)
         lay.addSpacing(6)
         lay.addWidget(self.gear_btn)
