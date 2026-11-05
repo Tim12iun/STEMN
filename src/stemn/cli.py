@@ -4,11 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
-
-# Apollo on the Mac's graphics chip: ops it cannot run there go to the processor instead of failing
-os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
 from pathlib import Path
 
 from . import __version__
@@ -26,7 +22,7 @@ def _cmd_separate(args) -> int:
     if args.progress_file:
         _exit_with_parent()  # started by the app window: never keep working after it is gone
     for path in args.input:
-        out = separate(path, stems=stems, model_id=args.model, output_dir=args.output, quality=args.quality, progress=progress, restore=args.restore, bleed=args.bleed, status=status)
+        out = separate(path, stems=stems, model_id=args.model, output_dir=args.output, quality=args.quality, progress=progress, bleed=args.bleed, status=status)
         results[str(path)] = {k: str(v) for k, v in out.items()}
         if not args.json:
             print(f"{path}:")
@@ -141,7 +137,6 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("-o", "--output", help="Zielordner (Standard: '<Datei> stems' daneben)")
     s.add_argument("-q", "--quality", default="best", choices=["fast", "normal", "best"], help="Tempo/Qualitaet (Standard: best)")
     s.add_argument("-b", "--bleed", default="off", choices=["off", "light", "strong"], help="Uebersprechen zwischen den Spuren daempfen (Standard: off)")
-    s.add_argument("-r", "--restore", action="store_true", help="danach jede Spur mit Apollo reparieren (fehlende Hoehen und Details ergaenzen, langsamer)")
     s.add_argument("--json", action="store_true", help="Ergebnis als JSON ausgeben")
     s.add_argument("--result-file", help=argparse.SUPPRESS)  # used by the app window
     s.add_argument("--progress-file", help=argparse.SUPPRESS)  # used by the app window

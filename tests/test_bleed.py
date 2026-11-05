@@ -49,3 +49,16 @@ def test_unknown_level():
     stems, _, _ = _stems()
     with pytest.raises(ValueError):
         reduce_bleed(stems, "max")
+
+
+def test_stems_add_up_to_the_original_loop():
+    """What the separation lost (e.g. a hat tail under a kick) goes back to the stems."""
+    rng = np.random.default_rng(1)
+    sr = 44100
+    loop = (rng.standard_normal((sr, 2)) * 0.1).astype(np.float32)
+    # a separation that lost 10 % of everything and some highs
+    stems = {"kick": loop * 0.5, "hihat": loop * 0.4}
+    for level in ("off", "light"):
+        out = reduce_bleed(stems, level, mix=loop)
+        total = sum(out.values())
+        assert np.abs(total - loop).max() < 1e-4

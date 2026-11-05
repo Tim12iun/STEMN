@@ -206,7 +206,7 @@ def _download(url: str, target: Path, progress=None) -> None:
 
 
 def _manifests(models_dir: Path) -> dict[str, str]:
-    found = sorted(models_dir.glob("*/stemn-model.yaml")) + sorted(models_dir.glob("*/stemn-restore.yaml"))
+    found = sorted(models_dir.glob("*/stemn-model.yaml"))
     return {f"{p.parent.name}/{p.name}": p.read_text(encoding="utf-8") for p in found}
 
 

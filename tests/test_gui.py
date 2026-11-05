@@ -224,7 +224,6 @@ def test_nothing_moves_when_clicking(window, app):
         lambda: window.toggle_solo("kick"),
         lambda: window.toggle_stem("snare"),
         lambda: window.clean_btn.click(),
-        lambda: window.restore_btn.setChecked(not window.restore_btn.isChecked()),
     ]
     for act in actions:
         act()
@@ -257,7 +256,7 @@ def test_x_in_progress_box_requests_cancel(window, app):
     window.wave.cancel_requested.connect(lambda: asked.append(True))
     window.resize(1300, 560)
     window.show()
-    window.wave.set_progress(0.4, "Apollo repariert Kick (1 von 5) · noch ca. 2 min")
+    window.wave.set_progress(0.4, "Trenne Spuren")
     window.wave.repaint()
     app.processEvents()
     r = window.wave._cancel_rect

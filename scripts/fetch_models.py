@@ -1,4 +1,4 @@
-"""Download the built-in model files listed in models/*/stemn-model.yaml and stemn-restore.yaml.
+"""Download the built-in model files listed in models/*/stemn-model.yaml.
 
 Used by the build (GitHub Actions) and for local development. Checks SHA-256
 and skips files that are already present and correct.
@@ -43,7 +43,7 @@ def fetch(url: str, target: Path, expected: str) -> None:
 
 
 def main() -> int:
-    manifests = sorted(ROOT.glob("*/stemn-model.yaml")) + sorted(ROOT.glob("*/stemn-restore.yaml"))
+    manifests = sorted(ROOT.glob("*/stemn-model.yaml"))
     if not manifests:
         print("Keine Modelle gefunden", file=sys.stderr)
         return 1

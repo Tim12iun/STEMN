@@ -67,27 +67,12 @@ def conform(stem_file: Path, reference: sf._SoundFileInfo, target: Path) -> Path
     return target
 
 
-CHUNK_HINT_SECONDS = 3.0  # Apollo piece length, for the first estimate before anything is measured
-STEM_LABELS = {"kick": "Kick", "snare": "Snare", "toms": "Toms", "hh": "Hi-Hat", "hihat": "Hi-Hat", "ride": "Ride", "crash": "Crash", "cymbals": "Becken"}
-
-
-def _seconds(path: Path) -> float:
-    try:
-        info = sf.info(str(path))
-        return info.frames / info.samplerate
-    except Exception:
-        return 0.0
-
-
 class Engine:
     """Keeps one model loaded so repeated calls (Max for Live, app) are fast."""
 
     def __init__(self) -> None:
         self._separator = None
-        self._restore_rate = 4.0  # seconds of work per second of audio; learned while Apollo runs
-        self._restore_rate_known = False
         self._model_id: str | None = None
-        self._restorer = None
         self._lock = threading.Lock()
 
     @staticmethod
@@ -116,78 +101,6 @@ class Engine:
             self._separator.model_instance.overlap = overlap
         return self._separator
 
-    def _load_restorer(self):
-        from .restore import Restorer, get_restorer
-
-        spec = get_restorer()
-        if self._restorer is None or self._restorer.spec.id != spec.id:
-            self._restorer = Restorer(spec)
-        return self._restorer
-
-    def _restore_file(self, restorer, path: Path, progress, status=None, label: str = "", later_seconds: float = 0.0) -> Path:
-        """Restore one raw stem file into a new file next to it (at the restorer's sample rate).
-
-        ``progress`` gets 0..1 for this stem. ``status`` (optional) gets a short German line with
-        the estimated time left, ``later_seconds`` being the audio still to come after this stem.
-        """
-        audio, sr = sf.read(str(path), dtype="float32", always_2d=True)
-        if sr != restorer.sample_rate:
-            import librosa
-
-            audio = librosa.resample(audio.T, orig_sr=sr, target_sr=restorer.sample_rate).T
-        seconds = len(audio) / restorer.sample_rate
-        state = {"done": 0.0, "since": time.monotonic(), "step": None}
-        measured = {"work": 0.0, "audio": 0.0}
-        stop = threading.Event()
-
-        device = getattr(getattr(restorer, "device", None), "type", "cpu")
-        where = "Grafikchip" if device == "mps" else "Prozessor"
-
-        def eta_text() -> str:
-            if self._restore_rate_known:
-                left_audio = seconds * (1.0 - state["done"]) + later_seconds
-                left = left_audio * self._restore_rate
-                when = "noch unter 1 min" if left < 60 else f"noch ca. {round(left / 60)} min"
-                return f"Apollo repariert {label} · {when} · auf dem {where}"
-            return f"Apollo repariert {label} · Restzeit wird gemessen · auf dem {where}"
-
-        def on_piece(fraction: float) -> None:
-            now = time.monotonic()
-            took = now - state["since"]
-            step = fraction - state["done"]
-            if took > 0.5 and step > 0:  # a piece that really ran (quiet ones are skipped instantly)
-                measured["work"] += took
-                measured["audio"] += step * seconds
-                self._restore_rate = measured["work"] / measured["audio"]
-                self._restore_rate_known = True
-                state["step"] = step
-            state["done"], state["since"] = fraction, now
-            progress(fraction)
-
-        def tick() -> None:
-            # between two pieces the bar keeps creeping towards the next one (never past it)
-            while not stop.wait(0.5):
-                step = state["step"] or min(1.0, CHUNK_HINT_SECONDS / max(seconds, 1e-6))
-                expected = max(step * seconds * self._restore_rate, 0.5)
-                part = min(0.9, (time.monotonic() - state["since"]) / expected)
-                progress(min(1.0, state["done"] + step * part))
-                if status:
-                    status(eta_text())
-
-        if status:
-            status(eta_text())
-        ticker = threading.Thread(target=tick, daemon=True)
-        ticker.start()
-        try:
-            restored = restorer.restore(audio, progress=on_piece)
-        finally:
-            stop.set()
-            ticker.join()
-        progress(1.0)
-        target = path.with_name(path.stem + "_restored.wav")
-        sf.write(str(target), restored, restorer.sample_rate, subtype="FLOAT")
-        return target
-
     def separate(
         self,
         input_path: str | Path,
@@ -196,7 +109,6 @@ class Engine:
         output_dir: str | Path | None = None,
         quality: str = "best",
         progress=None,
-        restore: bool = False,
         bleed: str = "off",
         status=None,
     ) -> dict[str, Path]:
@@ -204,7 +116,6 @@ class Engine:
 
         ``stems`` limits the files written (e.g. ``["kick"]``); ``None`` writes all.
         ``progress`` is called with values from 0 to 1.
-        ``restore`` runs the restoration model (Apollo) on every stem afterwards.
         ``bleed`` ("off", "light", "strong") damps cross-talk between the stems first.
         ``status`` (optional) gets short German lines on what is happening, e.g. time left.
         """
@@ -236,32 +147,16 @@ class Engine:
         with self._lock, tempfile.TemporaryDirectory(prefix="stemn-", dir=work_root) as tmp:
             work = Path(tmp)
             separator = self._load(spec, work, overlap)
-            restorer = self._load_restorer() if restore else None
             report(0.08)
             names = {raw: f"stem_{canonical_stem(raw)}" for raw in spec.stems}
-            split_end = 0.55 if restorer else 0.95
+            split_end = 0.95
             with _track_chunks(report, 0.08, split_end):
                 separator.separate(str(input_path), custom_output_names=names)
             report(split_end)
-            if restorer:
-                import gc
-
-                gc.collect()  # give the separation's buffers back before Apollo needs its share
 
             raw_files = {canonical_stem(p.stem.removeprefix("stem_")): p for p in work.glob("stem_*")}
-            if bleed != "off":
-                raw_files = _reduce_bleed_files(raw_files, bleed)
-            if restorer:
-                todo = [s for s in raw_files if wanted is None or s in wanted or any(s in VIRTUAL_STEMS.get(w, ()) for w in wanted)]
-                span = (0.95 - split_end) / max(len(todo), 1)
-                for i, stem in enumerate(todo):
-                    start = split_end + i * span
-                    later = sum(_seconds(raw_files[s]) for s in todo[i + 1 :])
-                    label = f"{STEM_LABELS.get(stem, stem)} ({i + 1} von {len(todo)})"
-                    raw_files[stem] = self._restore_file(
-                        restorer, raw_files[stem], lambda v, a=start: report(a + span * v), status, label, later
-                    )
-                report(0.95)
+            # always: the stems add up to exactly the original loop (nothing the separation lost goes missing)
+            raw_files = _reduce_bleed_files(raw_files, bleed, input_path)
             result: dict[str, Path] = {}
             for stem, path in raw_files.items():
                 if wanted is None or stem in wanted:
@@ -286,13 +181,23 @@ class Engine:
         return result
 
 
-def _reduce_bleed_files(raw_files: dict[str, Path], level: str) -> dict[str, Path]:
+def _reduce_bleed_files(raw_files: dict[str, Path], level: str, original: Path | None = None) -> dict[str, Path]:
     from .bleed import reduce_bleed
 
     audio, rate = {}, None
     for stem, path in raw_files.items():
         audio[stem], rate = sf.read(str(path), dtype="float32", always_2d=True)
-    cleaned = reduce_bleed(audio, level)
+    mix = None
+    if original is not None:
+        try:
+            mix, sr = sf.read(str(original), dtype="float32", always_2d=True)
+            if sr != rate:
+                import librosa
+
+                mix = librosa.resample(mix.T, orig_sr=sr, target_sr=rate).T
+        except Exception:
+            mix = None  # unreadable by soundfile (e.g. mp3): skip, the stems stay as separated
+    cleaned = reduce_bleed(audio, level, mix=mix)
     out = {}
     for stem, path in raw_files.items():
         target = path.with_name(path.stem + "_clean.wav")
@@ -342,8 +247,8 @@ def default_engine() -> Engine:
 
 
 def separate(
-    input_path, stems=None, model_id=None, output_dir=None, quality="best", progress=None, restore=False, bleed="off", status=None
+    input_path, stems=None, model_id=None, output_dir=None, quality="best", progress=None, bleed="off", status=None
 ) -> dict[str, Path]:
     return default_engine().separate(
-        input_path, stems=stems, model_id=model_id, output_dir=output_dir, quality=quality, progress=progress, restore=restore, bleed=bleed, status=status
+        input_path, stems=stems, model_id=model_id, output_dir=output_dir, quality=quality, progress=progress, bleed=bleed, status=status
     )

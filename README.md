@@ -49,17 +49,15 @@ Neue Version veroeffentlichen: auf GitHub unter *Actions → Build → Run workf
 Versionsnummer eintragen (z.B. `0.2.0`) oder einen Tag `v0.2.0` pushen. Der Build erstellt dann das
 Release mit den Paketen, und alle installierten stemn holen es sich beim naechsten Start.
 
-Weil das Repo privat ist, braucht stemn einen GitHub-Token mit **nur Lesezugriff auf dieses Repo**.
-Er wird beim Build aus dem Repo-Secret `STEMN_UPDATE_TOKEN` ins Paket eingebaut.
-Alternativ pro Rechner: `stemn update --token <TOKEN>`.
+Das Repo ist oeffentlich, Updates brauchen keinen Token.
 
-## Testoptionen: 5-Stem-Modell und Apollo-Reparatur
+## Modelle und Uebersprechen
 
-- **Modell** oben im Fenster: neben dem bisherigen 6-Stem-Modell gibt es *MDX23C DrumSep 5-Stem 2025 (jarredou)*.
+- **Modell** oben im Fenster: neben dem 6-Stem-Modell gibt es *MDX23C DrumSep 5-Stem 2025 (jarredou)*.
   Es trennt Kick, Snare und Toms sauberer, liefert Ride und Crash aber als eine Spur *Becken*.
-- **REPARIEREN** (Knopf *APOLLO · FEHLENDES ERGÄNZEN*): nach dem Trennen laeuft jede Spur durch das
-  Restaurierungsmodell Apollo, das fehlende Hoehen und Details neu erzeugt. Das dauert deutlich laenger
-  als das Trennen selbst. Kommandozeile: `stemn separate Loop.wav --restore`.
+- **Sauber** (standardmaessig an): daempft in jeder Spur, was hoerbar zu einer anderen gehoert.
+- Alle Spuren zusammen ergeben immer exakt den Original-Loop: was beim Trennen verloren geht
+  (z. B. ein Hi-Hat-Ausklang unter der Kick), bekommt die Spur zurueck, der es an dieser Stelle gehoert.
 
 ## Weitere Modelle hinzufuegen
 
