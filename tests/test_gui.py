@@ -183,9 +183,11 @@ def test_gear_shows_dot_when_update_is_waiting(window):
 def test_separate_stays_visible_and_glows_only_when_needed(window):
     assert window.separate_btn.isVisibleTo(window) and window.export_btn.isVisibleTo(window)
     assert window.separate_btn.property("lit") is False and window.export_btn.property("lit") is True
-    window.clean_btn.click()  # a setting that needs a new separation
+    window.model_box.addItem("Anderes Modell", "other-model")
+    i = window.model_box.currentIndex()
+    window.model_box.setCurrentIndex(window.model_box.count() - 1)  # another model needs a new separation
     assert window.separate_btn.property("lit") is True and window.export_btn.property("lit") is False
-    window.clean_btn.click()  # back to what the stems were made with
+    window.model_box.setCurrentIndex(i)  # back to what the stems were made with
     assert window.separate_btn.property("lit") is False
 
 
@@ -223,7 +225,6 @@ def test_nothing_moves_when_clicking(window, app):
         lambda: window.toggle_solo("kick"),
         lambda: window.toggle_solo("kick"),
         lambda: window.toggle_stem("snare"),
-        lambda: window.clean_btn.click(),
     ]
     for act in actions:
         act()

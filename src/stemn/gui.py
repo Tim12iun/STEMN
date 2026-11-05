@@ -438,12 +438,38 @@ class SeparateWorker(QObject):
 # --------------------------------------------------------------------------- small widgets
 
 
+def _drag_pixmap(widget: QWidget, paths):
+    from PySide6.QtGui import QPixmap
+
+    label = Path(paths[0]).stem if len(paths) == 1 else f"{len(paths)} Spuren"
+    font = QFont(FONT_FAMILY, 13, QFont.DemiBold)
+    from PySide6.QtGui import QFontMetrics
+
+    tw = QFontMetrics(font).horizontalAdvance(label)
+    dpr = widget.devicePixelRatioF() if widget is not None else 1.0
+    w, h = tw + 28, 30
+    pix = QPixmap(int(w * dpr), int(h * dpr))
+    pix.setDevicePixelRatio(dpr)
+    pix.fill(Qt.transparent)
+    p = QPainter(pix)
+    p.setRenderHint(QPainter.Antialiasing)
+    p.setPen(Qt.NoPen)
+    p.setBrush(QColor(ACCENT))
+    p.drawRoundedRect(QRectF(0, 0, w, h), 8, 8)
+    p.setPen(QColor("#FFFFFF"))
+    p.setFont(font)
+    p.drawText(QRectF(0, 0, w, h), Qt.AlignCenter, label)
+    p.end()
+    return pix
+
+
 def start_file_drag(widget: QWidget, path) -> None:
     paths = path if isinstance(path, (list, tuple)) else [path]
     mime = QMimeData()
     mime.setUrls([QUrl.fromLocalFile(str(p)) for p in paths])
     drag = QDrag(widget)
     drag.setMimeData(mime)
+    drag.setPixmap(_drag_pixmap(widget, paths))  # without it macOS shows an empty grey box
     drag.exec(Qt.CopyAction)
 
 
@@ -866,30 +892,33 @@ class WaveformView(QWidget):
         p.setBrush(QColor(ACCENT))
         p.drawEllipse(QPointF(x, 6), 4, 4)
 
+    def progress_box(self, r=None) -> QRectF:
+        """Small floating card in the bottom right corner, so the loop stays visible."""
+        r = QRectF(r if r is not None else self.rect())
+        w = min(320.0, r.width() - 32.0)
+        return QRectF(r.right() - 16 - w, r.bottom() - 16 - 84, w, 84)
+
     def _paint_progress(self, p: QPainter, r) -> None:
-        dim = QPainterPath()
-        dim.addRoundedRect(QRectF(r), 12, 12)
-        p.fillPath(dim, QColor(20, 20, 20, 150))  # dim the loop underneath
-        w = min(380.0, r.width() - 80.0)
-        box = QRectF(r.center().x() - w / 2 - 20, r.center().y() - 46, w + 40, 92)
-        p.setPen(Qt.NoPen)
-        p.setBrush(QColor(RAISED))
+        box = self.progress_box(r)
+        w = box.width() - 32
+        p.setPen(QPen(QColor(255, 255, 255, 28), 1))
+        p.setBrush(QColor(35, 34, 33, 215))  # half see-through, the loop shows behind it
         p.drawRoundedRect(box, 10, 10)
-        p.setPen(QColor(TEXT))
-        p.setFont(QFont(FONT_FAMILY, 15, QFont.DemiBold))
         title, _, detail = self.busy_text.partition(" · ")  # e.g. "Trenne Spuren · noch ca. 1 min"
-        p.drawText(QRectF(box.left() + 20, box.top() + 12, w * 0.8, 24), Qt.AlignLeft | Qt.AlignVCenter, title)
-        p.setFont(tabular_font(15))
-        p.drawText(QRectF(box.left() + 20, box.top() + 12, w - 34, 24), Qt.AlignRight | Qt.AlignVCenter, f"{round(self.progress * 100)} %")
+        p.setPen(QColor(TEXT))
+        p.setFont(QFont(FONT_FAMILY, 13, QFont.DemiBold))
+        p.drawText(QRectF(box.left() + 16, box.top() + 10, w - 80, 22), Qt.AlignLeft | Qt.AlignVCenter, title)
+        p.setFont(tabular_font(13))
+        p.drawText(QRectF(box.left() + 16, box.top() + 10, w - 30, 22), Qt.AlignRight | Qt.AlignVCenter, f"{round(self.progress * 100)} %")
         # the X that stops the run (asks first)
-        x = QRectF(box.right() - 20 - 24, box.top() + 12, 24, 24)
+        x = QRectF(box.right() - 12 - 22, box.top() + 10, 22, 22)
         self._cancel_rect = x.adjusted(-6, -6, 6, 6)
         p.setPen(QPen(QColor(MUTED), 2, Qt.SolidLine, Qt.RoundCap))
         c = x.center()
         p.drawLine(QPointF(c.x() - 5, c.y() - 5), QPointF(c.x() + 5, c.y() + 5))
         p.drawLine(QPointF(c.x() - 5, c.y() + 5), QPointF(c.x() + 5, c.y() - 5))
-        p.setPen(QColor(TEXT))
-        bar = QRectF(box.left() + 20, box.top() + 48, w, 6)
+        bar = QRectF(box.left() + 16, box.top() + 40, w, 6)
+        p.setPen(Qt.NoPen)
         p.setBrush(QColor(LINE))
         p.drawRoundedRect(bar, 3, 3)
         if self.progress > 0:
@@ -897,8 +926,8 @@ class WaveformView(QWidget):
             p.drawRoundedRect(QRectF(bar.left(), bar.top(), max(bar.width() * self.progress, 6), bar.height()), 3, 3)
         if detail:
             p.setPen(QColor(MUTED))
-            p.setFont(QFont(FONT_FAMILY, 12))
-            p.drawText(QRectF(box.left() + 20, box.top() + 62, w, 20), Qt.AlignLeft | Qt.AlignVCenter, detail)
+            p.setFont(QFont(FONT_FAMILY, 11))
+            p.drawText(QRectF(box.left() + 16, box.top() + 54, w, 20), Qt.AlignLeft | Qt.AlignVCenter, detail)
 
     # interaction
     def mousePressEvent(self, e):
@@ -1107,14 +1136,14 @@ class MainWindow(QMainWindow):
         self.volume.setToolTip(f"Lautstärke der Wiedergabe: {db:+d} dB (Doppelklick: zurück auf 0 dB) · Export bleibt unverändert")
 
     def _separation_key(self):
-        return (self.source, self.model_box.currentData(), self._bleed_level())
+        return (self.source, self.model_box.currentData())
 
     def _bleed_level(self) -> str:
-        return "light" if self.clean_btn.isChecked() else "off"
+        return "light"  # always damp cross-talk; the stems still add up to the original
 
     def _update_main_buttons(self) -> None:
         """TRENNEN glows when (re)separating is needed, otherwise EXPORTIEREN glows."""
-        if not hasattr(self, "clean_btn"):
+        if not hasattr(self, "model_box"):
             return  # panel not built yet
         loaded = bool(self.stems)
         needs = self.source is not None and (not loaded or self._separation_key() != self._separated_with)
@@ -1149,16 +1178,6 @@ class MainWindow(QMainWindow):
         lay.addWidget(self.model_box)
         lay.addSpacing(8)
 
-        # damp cross-talk: every stem keeps less of the other drums (one safe level, on by default)
-        lay.addWidget(self._caption("ÜBERSPRECHEN"))
-        self.clean_btn = QPushButton("Sauber · Übersprechen dämpfen")
-        self.clean_btn.setObjectName("toggle")
-        self.clean_btn.setCheckable(True)
-        self.clean_btn.setChecked(True)
-        self.clean_btn.setToolTip("Dämpft in jeder Spur, was hörbar zu einer anderen Spur gehört. Alle Spuren zusammen klingen weiter wie das Original.")
-        lay.addWidget(self.clean_btn)
-        lay.addSpacing(8)
-        self.clean_btn.toggled.connect(lambda _on: self._update_main_buttons())
         self.model_box.currentIndexChanged.connect(lambda _i: self._update_main_buttons())
 
 

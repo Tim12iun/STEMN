@@ -55,7 +55,7 @@ Das Repo ist oeffentlich, Updates brauchen keinen Token.
 
 - **Modell** oben im Fenster: neben dem 6-Stem-Modell gibt es *MDX23C DrumSep 5-Stem 2025 (jarredou)*.
   Es trennt Kick, Snare und Toms sauberer, liefert Ride und Crash aber als eine Spur *Becken*.
-- **Sauber** (standardmaessig an): daempft in jeder Spur, was hoerbar zu einer anderen gehoert.
+- Uebersprechen wird immer gedaempft: jede Spur behaelt weniger von den anderen Drums.
 - Alle Spuren zusammen ergeben immer exakt den Original-Loop: was beim Trennen verloren geht
   (z. B. ein Hi-Hat-Ausklang unter der Kick), bekommt die Spur zurueck, der es an dieser Stelle gehoert.
 
