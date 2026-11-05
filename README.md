@@ -15,6 +15,7 @@ Status: App mit Oberflaeche (Mac und Windows). Das Max-for-Live-Device folgt.
 3. Drum-Loop ins Fenster ziehen. Er wird sofort angezeigt und laesst sich mit der Leertaste abspielen.
 4. **TRENNEN** druecken. Ein Balken zeigt den Fortschritt, getrennt wird immer in bester Qualitaet. Danach:
    - **Klick auf den Namen** schaltet eine Spur an oder aus (aus = durchgestrichen). **S** spielt nur diese Spur, noch mal **S** stellt den vorherigen Zustand her. Leertaste spielt ab der Klickposition.
+   - **D** nimmt den Hall aus dieser Spur (De-Reverb). Der Knopf fuellt sich, solange gerechnet wird, und leuchtet danach. Ab dann schaltet **D** nur noch zwischen Original und ohne Hall um; Ziehen und Export nehmen die gewaehlte Version. Geht auch schon vor dem Trennen auf der Spur **Main** (der ganze Loop). Beim ersten Mal wird das De-Reverb-Modell einmalig geladen (ca. 900 MB, Internet noetig).
    - **Griff rechts** an jeder Spur (Feld mit Punkten) greifen und ziehen: die Spur direkt in Ableton ins Arrangement oder auf eine Spur ziehen.
    - **⠿ Mix** ziehen: alle eingeschalteten Spuren als eine Datei. **⠿ Einzeln** ziehen: jede eingeschaltete Spur als eigene Datei (in Ableton beim Loslassen ⌘ bzw. Strg halten, dann landet jede auf einer eigenen Spur).
 
@@ -28,6 +29,7 @@ Eingangsformate: WAV, AIFF, FLAC.
 stemn separate "Loop.wav"                 # alle Stems
 stemn separate "Loop.wav" -s kick         # nur die Kick
 stemn separate "Loop.wav" -q fast         # schneller (fast / normal / best, Standard: best)
+stemn dereverb "Loop.wav"                 # Hall entfernen -> "<Loop> stems/<Loop> dereverb.wav"
 stemn models list                         # Modelle anzeigen
 stemn serve                               # Dienst fuer Max for Live (Port 47800)
 ```

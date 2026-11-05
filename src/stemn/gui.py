@@ -34,6 +34,7 @@ from .models import discover_models
 
 AUDIO_EXT = {".wav", ".aif", ".aiff", ".flac"}
 STEM_LABELS = {
+    "main": "Main",
     "kick": "Kick",
     "snare": "Snare",
     "hihat": "Hi-Hat",
@@ -42,9 +43,10 @@ STEM_LABELS = {
     "crash": "Crash",
     "cymbals": "Becken",
 }
-STEM_ORDER = ["kick", "snare", "hihat", "toms", "ride", "crash", "cymbals"]
+STEM_ORDER = ["main", "kick", "snare", "hihat", "toms", "ride", "crash", "cymbals"]
 # Kennfarben fuer Inhalte (gedaempft, nie Bedienfarben). Orange bleibt der einzige Akzent.
 STEM_COLORS = {
+    "main": "#8F8C86",
     "kick": "#c4694c",
     "snare": "#c2a14e",
     "hihat": "#5f9fb0",
@@ -362,11 +364,32 @@ def _read_progress(path: Path) -> tuple[float, str] | None:
         return None
 
 
+def dereverb_command(path: Path, result_file: Path, progress_file: Path) -> list[str]:
+    """Command line that removes the reverb from one file in its own process."""
+    if getattr(sys, "frozen", False):
+        cmd = [sys.executable, "dereverb"]
+    else:
+        cmd = [sys.executable, "-m", "stemn.cli", "dereverb"]
+    return cmd + [str(path), "--result-file", str(result_file), "--progress-file", str(progress_file)]
+
+
 def run_separation(path: Path, model_id: str | None, progress=None, bleed: str = "off") -> dict:
     """Run the separation in a child process. Returns {stem: path} or raises RuntimeError.
 
     ``progress`` (optional) is called with (value 0..1, status line) while it runs.
     """
+    data = _run_child(lambda r, p: separate_command(path, model_id, r, p, bleed), progress, "Die Trennung")
+    return next(iter(data["stems"].values()), {})
+
+
+def run_dereverb(path: Path, progress=None) -> Path:
+    """Remove the reverb from ``path`` in a child process. Returns the new file."""
+    data = _run_child(lambda r, p: dereverb_command(path, r, p), progress, "Das Entfernen des Halls")
+    return Path(data["file"])
+
+
+def _run_child(make_cmd, progress, what: str) -> dict:
+    """Start one stemn command as a child process and wait for its result file."""
     import json
     import subprocess
     import tempfile
@@ -382,7 +405,7 @@ def run_separation(path: Path, model_id: str | None, progress=None, bleed: str =
         with open(stderr_file, "wb") as err:
             env = dict(os.environ, STEMN_WORK_DIR=tmp)
             proc = subprocess.Popen(
-                separate_command(path, model_id, result_file, progress_file, bleed),
+                make_cmd(result_file, progress_file),
                 env=env,
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
@@ -407,8 +430,8 @@ def run_separation(path: Path, model_id: str | None, progress=None, bleed: str =
         stderr = stderr_file.read_bytes() if stderr_file.is_file() else b""
     if "error" in data:
         raise RuntimeError(data["error"])
-    if proc.returncode == 0 and "stems" in data:
-        return next(iter(data["stems"].values()), {})
+    if proc.returncode == 0 and data:
+        return data
     if proc.returncode in (-9, 137):
         raise RuntimeError(
             "Der Mac hat die Berechnung abgebrochen, vermutlich war der Arbeitsspeicher voll. "
@@ -416,7 +439,7 @@ def run_separation(path: Path, model_id: str | None, progress=None, bleed: str =
         )
     tail = stderr.decode("utf-8", "replace").strip().splitlines()[-3:]
     detail = ("\n" + "\n".join(tail)) if tail else ""
-    raise RuntimeError(f"Die Trennung ist abgestuerzt (Code {proc.returncode}).{detail}")
+    raise RuntimeError(f"{what} ist abgestuerzt (Code {proc.returncode}).{detail}")
 
 
 class SeparateWorker(QObject):
@@ -431,6 +454,22 @@ class SeparateWorker(QObject):
     def run(self) -> None:
         try:
             self.finished.emit(run_separation(self.path, self.model_id, self.progress.emit, self.bleed))
+        except Exception as exc:
+            self.failed.emit(str(exc))
+
+
+class DereverbWorker(QObject):
+    finished = Signal(str, str)  # stem, new file
+    failed = Signal(str)
+    progress = Signal(float, str)
+
+    def __init__(self, stem: str, path: Path) -> None:
+        super().__init__()
+        self.stem, self.path = stem, path
+
+    def run(self) -> None:
+        try:
+            self.finished.emit(self.stem, str(run_dereverb(self.path, self.progress.emit)))
         except Exception as exc:
             self.failed.emit(str(exc))
 
@@ -682,17 +721,62 @@ class TransportButton(QPushButton):
         p.end()
 
 
+class DereverbButton(QPushButton):
+    """D: take the reverb out of this track.
+
+    While the reverb is being removed the button fills up from left to right in
+    orange; when it is done it glows like S. After that it only switches between
+    the original and the version without reverb (both stay in the cache).
+    """
+
+    def __init__(self) -> None:
+        super().__init__("D")
+        self.setObjectName("small")
+        self.setCheckable(True)
+        self.fill: float | None = None  # 0..1 while working
+        self.setToolTip("D: Hall entfernen (De-Reverb) · danach an/aus wechselt zwischen Original und ohne Hall")
+
+    def set_fill(self, value: float | None) -> None:
+        self.fill = None if value is None else min(max(value, 0.0), 1.0)
+        self.update()
+
+    def paintEvent(self, e):
+        super().paintEvent(e)
+        if self.fill is None:
+            return
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        r = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+        clip = QPainterPath()
+        clip.addRoundedRect(r, 6, 6)
+        p.setClipPath(clip)
+        fill = QColor(ACCENT)
+        fill.setAlpha(150)
+        p.fillRect(QRectF(r.left(), r.top(), r.width() * self.fill, r.height()), fill)
+        p.setClipping(False)
+        p.setPen(QPen(QColor(ACCENT), 1))
+        p.setBrush(Qt.NoBrush)
+        p.drawRoundedRect(r, 6, 6)
+        p.setPen(QColor(TEXT))
+        p.setFont(self.font())
+        p.drawText(r, Qt.AlignCenter, "D")
+        p.end()
+
+
 class StemStrip(QFrame):
-    """One stem in the side panel: colour + name (on/off), gain fader, dB, S, drag handle."""
+    """One stem in the side panel: colour + name (on/off), gain fader, dB, S, D, drag handle."""
 
     changed = Signal()
     name_clicked = Signal(str)
     solo_clicked = Signal(str)
+    dereverb_clicked = Signal(str)
 
     def __init__(self, stem: str, path: Path) -> None:
         super().__init__()
         self.setObjectName("strip")
-        self.stem, self.path = stem, path
+        self.stem = stem
+        self.original = path  # the track as separated (or the loop itself for Main)
+        self.dry: Path | None = None  # the same without reverb, once computed
         color = STEM_COLORS.get(stem, MUTED)
         lay = QHBoxLayout(self)
         lay.setContentsMargins(0, 2, 0, 2)
@@ -712,17 +796,19 @@ class StemStrip(QFrame):
         self.solo.setObjectName("small")
         self.solo.setCheckable(True)
         self.solo.setToolTip("Solo: nur diese Spur · noch mal drücken: vorheriger Zustand")
+        self.d = DereverbButton()
         grip = StemGrip(color, self._drag_path, "Greifen und ziehen: nur diese Spur in Ableton ablegen (Arrangement oder Spur)")
         self.grip = grip
         lay.addWidget(self.check)
         lay.addWidget(self.fader, 1)
-        for w in (self.db, self.solo, grip):
+        for w in (self.db, self.solo, self.d, grip):
             lay.addWidget(w)
 
         self.fader.valueChanged.connect(self._on_fader)
         self.check.toggled.connect(self._on_toggled)
         self.check.clicked.connect(lambda: self.name_clicked.emit(self.stem))
         self.solo.clicked.connect(lambda: self.solo_clicked.emit(self.stem))
+        self.d.clicked.connect(lambda: self.dereverb_clicked.emit(self.stem))
         self.db.installEventFilter(self)
 
         try:
@@ -753,6 +839,11 @@ class StemStrip(QFrame):
 
     def _on_toggled(self, _checked: bool) -> None:
         self.changed.emit()
+
+    @property
+    def path(self) -> Path:
+        """The version that plays and gets dragged: without reverb when D is on."""
+        return self.dry if (self.dry is not None and self.d.isChecked()) else self.original
 
     def _drag_path(self) -> Path:
         return self.path
@@ -1017,7 +1108,8 @@ class MainWindow(QMainWindow):
         self.player = Player()
         self.rows: list[StemStrip] = []
         self.source: Path | None = None
-        self.stems: dict[str, Path] = {}
+        self.separated = False  # rows are stems (else: only the Main row of the loop)
+        self.dry_cache: dict[tuple, Path] = {}  # (file, mtime) -> version without reverb, this session
         self._thread: QThread | None = None
         self.update_state: dict = {"phase": "idle"}
         self._update_thread: QThread | None = None
@@ -1181,7 +1273,7 @@ class MainWindow(QMainWindow):
         """TRENNEN glows when (re)separating is needed, otherwise EXPORTIEREN glows."""
         if not hasattr(self, "model_box"):
             return  # panel not built yet
-        loaded = bool(self.stems)
+        loaded = self.separated
         needs = self.source is not None and (not loaded or self._separation_key() != self._separated_with)
         for btn, lit in ((self.separate_btn, needs), (self.export_btn, loaded and not needs)):
             if btn.property("lit") != lit:
@@ -1241,14 +1333,22 @@ class MainWindow(QMainWindow):
         for w in self.findChildren(QWidget):
             w.setFocusPolicy(Qt.NoFocus)
 
-    def _set_loaded(self, loaded: bool) -> None:
-        """loaded = stems exist. Before that only the loop itself can be played."""
-        has_audio = loaded or self.player.length > 0
+    @property
+    def stems(self) -> dict[str, Path]:
+        """Every track on screen and the version of it that is selected (D on/off)."""
+        return {r.stem: r.path for r in self.rows}
+
+    def _set_loaded(self, _loaded: bool = False) -> None:
+        """Enable what makes sense: the rows can be played and dragged, TRENNEN needs a loop."""
+        has_rows = bool(self.rows)
         for w in (self.play_btn, self.to_start_btn):
-            w.setEnabled(has_audio)
+            w.setEnabled(has_rows or self.player.length > 0)
         for w in (self.export_btn, self.folder_btn, self.mix_grip, self.single_grip):
-            w.setEnabled(loaded)
-        self.separate_btn.setEnabled(self.source is not None and self._thread is None)
+            w.setEnabled(has_rows)
+        idle = self._thread is None
+        self.separate_btn.setEnabled(self.source is not None and idle)
+        for r in self.rows:
+            r.d.setEnabled(idle)
         self._update_main_buttons()
 
     # ---- separation
@@ -1266,8 +1366,8 @@ class MainWindow(QMainWindow):
         self.clear_rows()
         self.file_label.setText(path.name)
         try:
-            self.player.load({"_source": path})
-            self.wave.set_stems({"_source": path})
+            self.player.load({"main": path})
+            self.wave.set_stems({"main": path})
         except Exception as exc:
             self.source = None
             self.player.load({})
@@ -1275,20 +1375,23 @@ class MainWindow(QMainWindow):
             self.status.setText(str(exc))
             self._set_loaded(False)
             return
+        self._add_rows({"main": path})
         self.wave.position = 0.0
         self._set_loaded(False)
-        self.status.setText("Leertaste spielt den Loop · TRENNEN zerlegt ihn in Spuren (beste Qualität)")
+        self.update_gains()
+        self._no_focus()
+        self.status.setText("Leertaste spielt den Loop · D nimmt den Hall raus · TRENNEN zerlegt ihn in Spuren (beste Qualität)")
 
     def separate_current(self) -> None:
         if self._thread is not None or self.source is None:
             return
         self.wave.set_progress(0.0, "Modell wird geladen")
         self.status.setText("Trennt in bester Qualität · der Loop lässt sich währenddessen weiter abspielen")
-        self.import_btn.setEnabled(False)
-        self.separate_btn.setEnabled(False)
         self._cancelled = False
-
+        self._job = "separate"
         self._thread = QThread(self)
+        self._set_loaded()
+        self.import_btn.setEnabled(False)
         self._pending_key = self._separation_key()
         self._worker = SeparateWorker(self.source, self.model_box.currentData(), self._bleed_level())
         self._worker.progress.connect(self.on_progress)
@@ -1311,7 +1414,9 @@ class MainWindow(QMainWindow):
         self.wave.set_progress(value, text)
 
     def _confirm_cancel(self) -> bool:
-        keep = " Die vorherige Trennung bleibt erhalten." if self.stems else ""
+        keep = " Die vorherige Trennung bleibt erhalten." if self.separated else ""
+        if getattr(self, "_job", None) == "dereverb":
+            keep = " Die Spur bleibt, wie sie war."
         box = QMessageBox(self)
         box.setWindowTitle("stemn")
         box.setText("Rendern wirklich abbrechen?")
@@ -1331,44 +1436,61 @@ class MainWindow(QMainWindow):
 
     def _cleanup_thread(self) -> None:
         self._thread = None
+        self._job = None
         self.import_btn.setEnabled(True)
-        self.separate_btn.setEnabled(self.source is not None)
+        self._set_loaded()
 
     def on_failed(self, msg: str) -> None:
         if getattr(self, "_closing", False):
             return  # we ended the separation ourselves
+        dereverb = getattr(self, "_job", None) == "dereverb"
+        if dereverb:
+            for r in self.rows:
+                r.d.set_fill(None)
+                r.d.setChecked(r.dry is not None and r.d.isChecked())
         if getattr(self, "_cancelled", False):
             self.wave.progress = None
             self.wave.update()
-            self.status.setText(
-                "Abgebrochen. Die vorherige Trennung ist weiter da." if self.stems else "Abgebrochen. Mit TRENNEN neu starten."
-            )
+            if dereverb:
+                self.status.setText("Abgebrochen. Die Spur bleibt, wie sie war.")
+            else:
+                self.status.setText(
+                    "Abgebrochen. Die vorherige Trennung ist weiter da." if self.separated else "Abgebrochen. Mit TRENNEN neu starten."
+                )
             return
         self.wave.progress = None
         self.wave.update()
-        self.status.setText(f"Fehler beim Trennen: {msg}")
+        self.status.setText(f"Fehler beim Entfernen des Halls: {msg}" if dereverb else f"Fehler beim Trennen: {msg}")
         QMessageBox.warning(self, "stemn", msg)
 
-    def on_done(self, stems: dict) -> None:
-        self.stems = {k: Path(v) for k, v in stems.items()}
+    def _add_rows(self, files: dict[str, Path]) -> None:
         self.empty_rows.hide()
-        for stem in sorted(self.stems, key=lambda s: STEM_ORDER.index(s) if s in STEM_ORDER else 99):
-            row = StemStrip(stem, self.stems[stem])
+        for stem in sorted(files, key=lambda s: STEM_ORDER.index(s) if s in STEM_ORDER else 99):
+            row = StemStrip(stem, Path(files[stem]))
             row.changed.connect(self.update_gains)
             row.name_clicked.connect(self.toggle_stem)
             row.solo_clicked.connect(self.toggle_solo)
+            row.dereverb_clicked.connect(self.toggle_dereverb)
+            cached = self.dry_cache.get(self._cache_key(row.original))
+            if cached is not None and cached.is_file():
+                row.dry = cached  # computed earlier in this session: D is ready, still off
             self.rows_box.addWidget(row)
             self.rows.append(row)
+
+    def on_done(self, stems: dict) -> None:
         was_playing = self.player.playing
         pos = self.player.pos
         self._stop_playback()
+        self.clear_rows()  # the Main row (or the previous stems) make room for the new stems
+        self._add_rows({k: Path(v) for k, v in stems.items()})
+        self.separated = True
         self.player.load(self.stems)
         self.player.seek(pos)
         self.wave.set_stems(self.stems)
         self._separated_with = getattr(self, "_pending_key", None) or self._separation_key()
         self._set_loaded(True)
         folder = next(iter(self.stems.values())).parent
-        self.status.setText("Klick auf den Namen: Spur an/aus · S: nur diese Spur · Griff rechts: Spur nach Ableton ziehen")
+        self.status.setText("Klick auf den Namen: Spur an/aus · S: nur diese Spur · D: Hall raus · Griff rechts: Spur nach Ableton ziehen")
         if self.source:
             self.file_label.setText(self.source.name)
         self.update_gains()
@@ -1381,10 +1503,86 @@ class MainWindow(QMainWindow):
             row.setParent(None)
             row.deleteLater()
         self.rows = []
-        self.stems = {}
+        self.separated = False
         self._solo, self._before_solo = None, None
         self.empty_rows.show()
         self._set_loaded(False)
+
+    # ---- de-reverb
+    @staticmethod
+    def _cache_key(path: Path) -> tuple:
+        try:
+            return (str(path), path.stat().st_mtime_ns)
+        except OSError:
+            return (str(path), 0)
+
+    def toggle_dereverb(self, stem: str) -> None:
+        """D: first time compute the version without reverb, after that switch between both."""
+        row = next(r for r in self.rows if r.stem == stem)
+        if row.dry is not None:  # cached: just switch, nothing to compute
+            self._reload_audio()
+            return
+        if self._thread is not None:
+            row.d.setChecked(False)
+            return
+        row.d.setChecked(False)  # glows only when the version without reverb is there
+        row.d.set_fill(0.0)
+        self._cancelled = False
+        self._job = "dereverb"
+        label = STEM_LABELS.get(stem, stem.title())
+        self._dereverb_label = label
+        self.wave.set_progress(0.0, f"Hall wird entfernt · {label}")
+        self.status.setText("Hall wird entfernt · der Loop lässt sich währenddessen weiter abspielen")
+        self._thread = QThread(self)
+        self._set_loaded()
+        self.import_btn.setEnabled(False)
+        self._worker = DereverbWorker(stem, row.original)
+        self._worker.progress.connect(self.on_dereverb_progress)
+        self._worker.moveToThread(self._thread)
+        self._thread.started.connect(self._worker.run)
+        self._worker.finished.connect(self.on_dereverb_done)
+        self._worker.failed.connect(self.on_failed)
+        self._worker.finished.connect(self._thread.quit)
+        self._worker.failed.connect(self._thread.quit)
+        self._thread.finished.connect(self._cleanup_thread)
+        self._thread.start()
+
+    def on_dereverb_progress(self, value: float, note: str = "") -> None:
+        label = getattr(self, "_dereverb_label", "")
+        if note:  # first use: the model is downloaded once
+            text = f"{note} · {label}"
+        elif value < 0.35:
+            text = f"Modell wird geladen · {label}"
+        else:
+            text = f"Hall wird entfernt · {label}"
+        self.wave.set_progress(value, text)
+        for r in self.rows:
+            if r.d.fill is not None:
+                r.d.set_fill(value)
+
+    def on_dereverb_done(self, stem: str, path: str) -> None:
+        row = next((r for r in self.rows if r.stem == stem), None)
+        self.wave.progress = None
+        if row is None:
+            return
+        row.dry = Path(path)
+        self.dry_cache[self._cache_key(row.original)] = row.dry
+        row.d.set_fill(None)
+        row.d.setChecked(True)
+        self._reload_audio()
+        self.status.setText("D an: ohne Hall · D noch mal: Original · Ziehen nimmt die gewählte Version")
+
+    def _reload_audio(self) -> None:
+        """Load the selected versions (D on/off) and keep playing where it was."""
+        was_playing = self.player.playing
+        pos = self.player.pos
+        self._stop_playback()
+        self.player.load(self.stems)
+        self.player.seek(pos)
+        self.wave.set_stems(self.stems)
+        self.update_gains()
+        if was_playing:
+            self.toggle_play()
 
     # ---- mixing / playback
     def audible(self) -> list[str]:

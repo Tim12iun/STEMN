@@ -302,3 +302,72 @@ def test_play_and_pause_symbols_keep_the_button_size(window):
     window.play_btn.setChecked(True)
     window.play_btn.setText("❚❚")
     assert window.play_btn.width() == w
+
+
+def _wait_for_job(window, app):
+    import time
+
+    end = time.time() + 10
+    while window._thread is not None and time.time() < end:
+        app.processEvents()
+        time.sleep(0.01)
+    app.processEvents()
+    assert window._thread is None
+
+
+def test_loading_a_loop_shows_main_row_with_d(app, tmp_path):
+    sr = 44100
+    loop = tmp_path / "loop.wav"
+    sf.write(loop, np.full((sr, 2), 0.2, dtype=np.float32), sr)
+    w = gui.MainWindow()
+    try:
+        w.start(loop)
+        assert [r.stem for r in w.rows] == ["main"]
+        row = w.rows[0]
+        assert row.d.isEnabled() and not row.d.isChecked()
+        assert w.separate_btn.property("lit") is True  # TRENNEN still to do
+        assert w.stems == {"main": loop}
+    finally:
+        w.close()
+
+
+def test_d_computes_once_then_switches_from_cache(window, app, monkeypatch):
+    calls = []
+
+    def fake_dereverb(path, progress=None):
+        calls.append(path)
+        if progress:
+            progress(0.5, "")
+        out = path.parent / f"{path.stem} dereverb.wav"
+        audio, sr = sf.read(str(path), dtype="float32", always_2d=True)
+        sf.write(out, audio * 0.5, sr)
+        return out
+
+    monkeypatch.setattr(gui, "run_dereverb", fake_dereverb)
+    row = window.rows[0]
+    original = row.original
+    row.d.click()
+    _wait_for_job(window, app)
+    assert len(calls) == 1
+    assert row.d.isChecked() and row.d.fill is None
+    assert row.path.name.endswith("dereverb.wav")
+    assert window.stems[row.stem] == row.path  # drag, mix and playback use the version without reverb
+    assert np.isclose(window.player.tracks[row.stem].max(), 0.05, atol=1e-3)
+    row.d.click()  # off: back to the original, nothing computed
+    _wait_for_job(window, app)
+    assert not row.d.isChecked() and row.path == original and len(calls) == 1
+    row.d.click()  # on again: from the cache
+    assert row.d.isChecked() and row.path.name.endswith("dereverb.wav") and len(calls) == 1
+
+
+def test_failed_dereverb_leaves_d_off(window, app, monkeypatch):
+    def broken(path, progress=None):
+        raise RuntimeError("kaputt")
+
+    monkeypatch.setattr(gui, "run_dereverb", broken)
+    monkeypatch.setattr(gui.QMessageBox, "warning", lambda *a, **k: None)
+    row = window.rows[1]
+    row.d.click()
+    _wait_for_job(window, app)
+    assert not row.d.isChecked() and row.d.fill is None and row.dry is None
+    assert row.path == row.original

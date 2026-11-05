@@ -35,6 +35,20 @@ def _cmd_separate(args) -> int:
     return 0
 
 
+def _cmd_dereverb(args) -> int:
+    from .dereverb import dereverb
+
+    progress = status = None
+    if args.progress_file:
+        progress, status = _progress_writer(args.progress_file)
+        _exit_with_parent()
+    out = dereverb(args.input, output=args.output, progress=progress, status=status)
+    print(out)
+    if args.result_file:
+        _write_result(args.result_file, {"file": str(out)})
+    return 0
+
+
 def _exit_with_parent() -> None:
     import os
     import threading
@@ -141,6 +155,13 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--result-file", help=argparse.SUPPRESS)  # used by the app window
     s.add_argument("--progress-file", help=argparse.SUPPRESS)  # used by the app window
     s.set_defaults(func=_cmd_separate)
+
+    d = sub.add_parser("dereverb", help="Hall aus einem Loop oder Stem entfernen")
+    d.add_argument("input", help="WAV/AIFF/FLAC-Datei")
+    d.add_argument("-o", "--output", help="Zieldatei (Standard: '<Datei> dereverb.wav' im Stems-Ordner)")
+    d.add_argument("--result-file", help=argparse.SUPPRESS)  # used by the app window
+    d.add_argument("--progress-file", help=argparse.SUPPRESS)  # used by the app window
+    d.set_defaults(func=_cmd_dereverb)
 
     m = sub.add_parser("models", help="Modelle anzeigen oder importieren")
     msub = m.add_subparsers(dest="models_cmd", required=True)
