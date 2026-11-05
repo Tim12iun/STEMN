@@ -231,3 +231,52 @@ def test_nothing_moves_when_clicking(window, app):
         after = snapshot()
         moved = [before[k] for k in before if k in after and after[k][1] != before[k][1]]
         assert not moved, moved
+
+
+def test_cancel_asks_first_and_keeps_the_previous_stems(window, monkeypatch):
+    stems_before = dict(window.stems)
+    stopped = []
+    monkeypatch.setattr(gui, "stop_separations", lambda: stopped.append(True))
+    window._thread = object()  # a run is going
+    monkeypatch.setattr(window, "_confirm_cancel", lambda: False)
+    window.cancel_separation()
+    assert not stopped  # said "keep rendering"
+    monkeypatch.setattr(window, "_confirm_cancel", lambda: True)
+    window.cancel_separation()
+    assert stopped
+    window.on_failed("killed")
+    window._thread = None
+    assert window.stems == stems_before and "vorherige Trennung" in window.status.text()
+
+
+def test_x_in_progress_box_requests_cancel(window, app):
+    from PySide6.QtCore import QPoint, Qt
+    from PySide6.QtTest import QTest
+
+    asked = []
+    window.wave.cancel_requested.connect(lambda: asked.append(True))
+    window.resize(1300, 560)
+    window.show()
+    window.wave.set_progress(0.4, "Apollo repariert Kick (1 von 5) · noch ca. 2 min")
+    window.wave.repaint()
+    app.processEvents()
+    r = window.wave._cancel_rect
+    QTest.mouseClick(window.wave, Qt.LeftButton, pos=QPoint(int(r.center().x()), int(r.center().y())))
+    assert asked
+
+
+def test_stale_work_folders_are_cleared(tmp_path, monkeypatch):
+    import os
+    import tempfile
+    import time
+
+    monkeypatch.setattr(tempfile, "gettempdir", lambda: str(tmp_path))
+    old = tmp_path / "stemn-old"
+    old.mkdir()
+    (old / "stem_kick.wav").write_bytes(b"x" * 10)
+    past = time.time() - 3 * 3600
+    os.utime(old, (past, past))
+    fresh = tmp_path / "stemn-fresh"
+    fresh.mkdir()
+    assert gui.clear_stale_work() == 1
+    assert not old.exists() and fresh.exists()

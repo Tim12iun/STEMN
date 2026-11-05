@@ -7,6 +7,7 @@ so a stem can be dropped onto the same position in a DAW and stays on the grid.
 from __future__ import annotations
 
 import logging
+import os
 import re
 import tempfile
 import threading
@@ -227,7 +228,9 @@ class Engine:
         reference = sf.info(str(input_path))
         base = _safe_name(input_path.stem)
 
-        with self._lock, tempfile.TemporaryDirectory(prefix="stemn-") as tmp:
+        # the app hands its own folder in, so a stopped run leaves nothing behind
+        work_root = os.environ.get("STEMN_WORK_DIR") or None
+        with self._lock, tempfile.TemporaryDirectory(prefix="stemn-", dir=work_root) as tmp:
             work = Path(tmp)
             separator = self._load(spec, work, overlap)
             restorer = self._load_restorer() if restore else None

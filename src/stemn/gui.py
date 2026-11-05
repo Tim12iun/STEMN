@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 import threading
 from pathlib import Path
@@ -337,6 +338,24 @@ def stop_separations() -> None:
     _RUNNING.clear()
 
 
+def clear_stale_work(max_age_hours: float = 1.0) -> int:
+    """Remove work folders a hard-quit app left in the temp folder. Returns how many."""
+    import shutil
+    import tempfile
+    import time
+
+    removed = 0
+    cutoff = time.time() - max_age_hours * 3600
+    for folder in Path(tempfile.gettempdir()).glob("stemn-*"):
+        try:
+            if folder.is_dir() and folder.stat().st_mtime < cutoff:
+                shutil.rmtree(folder, ignore_errors=True)
+                removed += 1
+        except OSError:
+            pass
+    return removed
+
+
 def _read_progress(path: Path) -> tuple[float, str] | None:
     """(value, status line) from the child's progress file, or None while it is not readable."""
     try:
@@ -364,8 +383,10 @@ def run_separation(path: Path, model_id: str | None, progress=None, restore: boo
         if sys.platform == "win32":
             kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
         with open(stderr_file, "wb") as err:
+            env = dict(os.environ, STEMN_WORK_DIR=tmp)
             proc = subprocess.Popen(
                 separate_command(path, model_id, result_file, progress_file, restore, bleed),
+                env=env,
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
                 stderr=err,
@@ -687,6 +708,7 @@ class WaveformView(QWidget):
 
     seek = Signal(float)  # 0..1
     dropped = Signal(Path)
+    cancel_requested = Signal()
 
     def __init__(self) -> None:
         super().__init__()
@@ -701,6 +723,7 @@ class WaveformView(QWidget):
         self.message = "Drum-Loop hierher ziehen\noder oben auf „Öffnen“ klicken"
         self.progress: float | None = None  # set while separating
         self.busy_text = ""
+        self._cancel_rect: QRectF | None = None
         self._hover = False
         self._paths: dict[str, QPainterPath] = {}
         self._paths_size = None
@@ -860,7 +883,15 @@ class WaveformView(QWidget):
         title, _, detail = self.busy_text.partition(" · ")  # e.g. "Apollo repariert Snare (2 von 6) · noch ca. 3 min"
         p.drawText(QRectF(box.left() + 20, box.top() + 12, w * 0.8, 24), Qt.AlignLeft | Qt.AlignVCenter, title)
         p.setFont(tabular_font(15))
-        p.drawText(QRectF(box.left() + 20, box.top() + 12, w, 24), Qt.AlignRight | Qt.AlignVCenter, f"{round(self.progress * 100)} %")
+        p.drawText(QRectF(box.left() + 20, box.top() + 12, w - 34, 24), Qt.AlignRight | Qt.AlignVCenter, f"{round(self.progress * 100)} %")
+        # the X that stops the run (asks first)
+        x = QRectF(box.right() - 20 - 24, box.top() + 12, 24, 24)
+        self._cancel_rect = x.adjusted(-6, -6, 6, 6)
+        p.setPen(QPen(QColor(MUTED), 2, Qt.SolidLine, Qt.RoundCap))
+        c = x.center()
+        p.drawLine(QPointF(c.x() - 5, c.y() - 5), QPointF(c.x() + 5, c.y() + 5))
+        p.drawLine(QPointF(c.x() - 5, c.y() + 5), QPointF(c.x() + 5, c.y() - 5))
+        p.setPen(QColor(TEXT))
         bar = QRectF(box.left() + 20, box.top() + 48, w, 6)
         p.setBrush(QColor(LINE))
         p.drawRoundedRect(bar, 3, 3)
@@ -874,6 +905,10 @@ class WaveformView(QWidget):
 
     # interaction
     def mousePressEvent(self, e):
+        if self.progress is not None:
+            if self._cancel_rect is not None and self._cancel_rect.contains(e.position()):
+                self.cancel_requested.emit()
+            return
         if self.envelopes and self.progress is None:
             self.seek.emit(min(max(e.position().x() / max(self.width(), 1), 0.0), 1.0))
 
@@ -948,19 +983,8 @@ class MainWindow(QMainWindow):
         self.status = QLabel("Drum-Loop hierher ziehen, am besten eine reine Drum-Spur")
         self.status.setObjectName("muted")
         self.status.setWordWrap(True)
-        status_row = QHBoxLayout()
-        status_row.setContentsMargins(0, 0, 0, 0)
-        status_row.addWidget(self.status, 1)
-        # only visible while separating; its space is always kept, so nothing moves when it appears
-        self.cancel_btn = QPushButton("Abbrechen")
-        self.cancel_btn.setToolTip("Trennen abbrechen · Esc")
-        self.cancel_btn.clicked.connect(self.cancel_separation)
-        policy = self.cancel_btn.sizePolicy()
-        policy.setRetainSizeWhenHidden(True)
-        self.cancel_btn.setSizePolicy(policy)
-        self.cancel_btn.hide()
-        status_row.addWidget(self.cancel_btn, 0, Qt.AlignTop)
-        wave_box.addLayout(status_row)
+        wave_box.addWidget(self.status)
+        self.wave.cancel_requested.connect(self.cancel_separation)
         from PySide6.QtGui import QKeySequence, QShortcut
 
         esc = QShortcut(QKeySequence(Qt.Key_Escape), self)
@@ -1224,7 +1248,6 @@ class MainWindow(QMainWindow):
         self.import_btn.setEnabled(False)
         self.separate_btn.setEnabled(False)
         self._cancelled = False
-        self.cancel_btn.show()
 
         self._thread = QThread(self)
         self._restoring = self.restore_btn.isChecked() and not self.restore_btn.isHidden()
@@ -1253,15 +1276,27 @@ class MainWindow(QMainWindow):
         text = "Modell wird geladen" if value < 0.08 else "Apollo repariert die Spuren (dauert etwas)" if restoring and value < 0.95 else "Trenne Spuren" if value < 0.95 else "Spuren werden gespeichert"
         self.wave.set_progress(value, text)
 
+    def _confirm_cancel(self) -> bool:
+        keep = " Die vorherige Trennung bleibt erhalten." if self.stems else ""
+        box = QMessageBox(self)
+        box.setWindowTitle("stemn")
+        box.setText("Rendern wirklich abbrechen?")
+        box.setInformativeText(f"Der laufende Vorgang wird gestoppt.{keep}")
+        yes = box.addButton("Ja, abbrechen", QMessageBox.DestructiveRole)
+        box.addButton("Weiter rendern", QMessageBox.RejectRole)
+        box.exec()
+        return box.clickedButton() is yes
+
     def cancel_separation(self) -> None:
-        if self._thread is None:
+        if self._thread is None or not self._confirm_cancel():
             return
+        if self._thread is None:
+            return  # finished while the question was open
         self._cancelled = True
         stop_separations()
 
     def _cleanup_thread(self) -> None:
         self._thread = None
-        self.cancel_btn.hide()
         self.import_btn.setEnabled(True)
         self.separate_btn.setEnabled(self.source is not None)
 
@@ -1271,7 +1306,9 @@ class MainWindow(QMainWindow):
         if getattr(self, "_cancelled", False):
             self.wave.progress = None
             self.wave.update()
-            self.status.setText("Abgebrochen. Mit TRENNEN neu starten.")
+            self.status.setText(
+                "Abgebrochen. Die vorherige Trennung ist weiter da." if self.stems else "Abgebrochen. Mit TRENNEN neu starten."
+            )
             return
         self.wave.progress = None
         self.wave.update()
@@ -1707,6 +1744,7 @@ def main(argv: list[str] | None = None) -> int:
         from PySide6.QtGui import QIcon
 
         app.setWindowIcon(QIcon(str(icon)))
+    clear_stale_work()  # leftovers of a hard-quit run
     win = MainWindow()
     win.show()
     QTimer.singleShot(1500, win.startup_update_check)
