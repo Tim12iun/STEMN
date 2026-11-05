@@ -400,3 +400,25 @@ def test_dragging_d_blends_reverb_back_in(window, app, monkeypatch):
     audio, _ = sf.read(str(row.path), dtype="float32", always_2d=True)
     assert np.isclose(audio.max(), 0.04, atol=1e-3)  # 40 % of the reverb (= the original here) is back
     assert window.stems["kick"] == row.path
+
+
+def test_progress_glides_to_each_step_and_creeps_in_between(window):
+    wave = window.wave
+    wave.set_progress(0.0, "Trenne Spuren")
+    assert wave.progress == 0.0
+    wave.set_progress(0.4, "Trenne Spuren")
+    assert wave.progress == 0.0  # no jump
+    shown = []
+    for _ in range(60):
+        wave._glide_step()
+        shown.append(wave.progress)
+    assert all(b >= a for a, b in zip(shown, shown[1:]))  # only forward
+    assert 0.4 <= wave.progress <= 0.43  # caught up, crept on a little, not far past the step
+    for _ in range(500):
+        wave._glide_step()
+    assert wave.progress <= 0.43 + 1e-9  # never more than 3 % ahead of the real value
+    wave.set_progress(0.0, "Neu")  # a new run starts at 0 right away
+    assert wave.progress == 0.0
+    wave.progress = None
+    wave._glide_step()
+    assert not wave._glide.isActive()

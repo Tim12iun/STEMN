@@ -926,6 +926,7 @@ class WaveformView(QWidget):
     seek = Signal(float)  # 0..1
     dropped = Signal(Path)
     cancel_requested = Signal()
+    progress_moved = Signal(float)  # the shown (smoothed) progress, for the D button fill
 
     def __init__(self) -> None:
         super().__init__()
@@ -939,7 +940,11 @@ class WaveformView(QWidget):
         self.position = 0.0
         self.duration = 0.0
         self.message = "Drum-Loop hierher ziehen\noder oben auf „Öffnen“ klicken"
-        self.progress: float | None = None  # set while separating
+        self.progress: float | None = None  # shown value while separating / removing reverb
+        self._target = 0.0  # last real value from the worker; the shown value glides there
+        self._glide = QTimer(self)
+        self._glide.setInterval(33)
+        self._glide.timeout.connect(self._glide_step)
         self.busy_text = ""
         self._cancel_rect: QRectF | None = None
         self._hover = False
@@ -976,8 +981,31 @@ class WaveformView(QWidget):
         self.set_progress(0.0, "Modell wird geladen")
 
     def set_progress(self, value: float, text: str) -> None:
-        self.progress = min(max(value, 0.0), 1.0)
+        """Set where the bar is heading; it moves there smoothly (see _glide_step)."""
+        value = min(max(value, 0.0), 1.0)
+        if self.progress is None or value == 0.0 or value < self._target:
+            self.progress = value  # a new run starts at 0 right away
+        self._target = value
+        if not self._glide.isActive():
+            self._glide.start()
         self.busy_text = text
+        self.update()
+
+    def _glide_step(self) -> None:
+        """Real progress comes in steps. The bar catches up quickly after a step and
+        keeps creeping slowly in between, a little past the last step at most, so it
+        never stands still and never runs far ahead."""
+        if self.progress is None:
+            self._glide.stop()
+            return
+        gap = self._target - self.progress
+        if gap > 0.0005:
+            self.progress = min(self._target, self.progress + max(0.12 * gap, 0.002))
+        else:
+            self.progress = max(self.progress, min(self.progress + 0.0004, self._target + 0.03, 0.99))
+            if self._target >= 1.0:
+                self.progress = 1.0
+        self.progress_moved.emit(self.progress)
         self.update()
 
     def clear(self, message: str) -> None:
@@ -1208,6 +1236,7 @@ class MainWindow(QMainWindow):
         self.status.setWordWrap(True)
         wave_box.addWidget(self.status)
         self.wave.cancel_requested.connect(self.cancel_separation)
+        self.wave.progress_moved.connect(self._fill_d)
         from PySide6.QtGui import QKeySequence, QShortcut
 
         esc = QShortcut(QKeySequence(Qt.Key_Escape), self)
@@ -1626,6 +1655,8 @@ class MainWindow(QMainWindow):
         else:
             text = f"Hall wird entfernt · {label}"
         self.wave.set_progress(value, text)
+
+    def _fill_d(self, value: float) -> None:
         for r in self.rows:
             if r.d.fill is not None:
                 r.d.set_fill(value)
