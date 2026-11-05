@@ -36,12 +36,13 @@ def test_progress_is_reported(monkeypatch, tmp_path):
         monkeypatch,
         "import json,sys,time\n"
         "for v in (0.1, 0.5, 1.0):\n"
-        "    open(sys.argv[2],'w').write(str(v)); time.sleep(0.4)\n"
+        "    open(sys.argv[2],'w').write(f'{v}\\nSpur {v}'); time.sleep(0.4)\n"
         "open(sys.argv[1],'w').write(json.dumps({'stems': {'x': {}}}))",
     )
-    seen = []
-    gui.run_separation(tmp_path / "x.wav", None, seen.append)
+    seen, notes = [], []
+    gui.run_separation(tmp_path / "x.wav", None, lambda v, note: (seen.append(v), notes.append(note)))
     assert seen and seen == sorted(seen) and seen[-1] == 1.0
+    assert notes[-1] == "Spur 1.0"
 
 
 def test_command_dev_mode(tmp_path):

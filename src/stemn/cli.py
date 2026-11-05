@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
+
+# Apollo on the Mac's graphics chip: ops it cannot run there go to the processor instead of failing
+os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
 from pathlib import Path
 
 from . import __version__
@@ -16,11 +20,13 @@ def _cmd_separate(args) -> int:
 
     stems = [s for s in args.stems.split(",") if s] if args.stems else None
     results = {}
-    progress = _progress_writer(args.progress_file) if args.progress_file else None
+    progress = status = None
+    if args.progress_file:
+        progress, status = _progress_writer(args.progress_file)
     if args.progress_file:
         _exit_with_parent()  # started by the app window: never keep working after it is gone
     for path in args.input:
-        out = separate(path, stems=stems, model_id=args.model, output_dir=args.output, quality=args.quality, progress=progress, restore=args.restore, bleed=args.bleed)
+        out = separate(path, stems=stems, model_id=args.model, output_dir=args.output, quality=args.quality, progress=progress, restore=args.restore, bleed=args.bleed, status=status)
         results[str(path)] = {k: str(v) for k, v in out.items()}
         if not args.json:
             print(f"{path}:")
@@ -50,15 +56,25 @@ def _exit_with_parent() -> None:
 
 
 def _progress_writer(path: str):
+    """Two callbacks writing ``value`` and a status line into ``path`` (first and second line)."""
     target = Path(path)
+    state = {"value": 0.0, "note": ""}
 
-    def write(value: float) -> None:
+    def flush() -> None:
         try:
-            target.write_text(f"{value:.3f}", encoding="utf-8")
+            target.write_text(f"{state['value']:.4f}\n{state['note']}", encoding="utf-8")
         except OSError:
             pass
 
-    return write
+    def progress(value: float) -> None:
+        state["value"] = value
+        flush()
+
+    def status(note: str) -> None:
+        state["note"] = note.replace("\n", " ")
+        flush()
+
+    return progress, status
 
 
 def _write_result(path: str, data: dict) -> None:

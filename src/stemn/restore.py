@@ -143,10 +143,59 @@ def _windows(frames: int, chunk: int, fade: int) -> list[int]:
     return starts
 
 
+QUIET_PEAK = 10 ** (-50 / 20)  # pieces quieter than -50 dBFS have nothing worth repairing
+
+
+class _Pointwise:
+    """Stand-in for a 1x1 ``Conv1d``: a plain matrix product, which goes through the fast
+    BLAS of the platform (Accelerate on the Mac) instead of the generic convolution code."""
+
+    @staticmethod
+    def swap(module) -> int:
+        import torch
+        from torch import nn
+
+        class Pointwise(nn.Module):
+            def __init__(self, conv: nn.Conv1d) -> None:
+                super().__init__()
+                self.register_buffer("weight", conv.weight.detach()[:, :, 0].contiguous())
+                self.register_buffer("bias", None if conv.bias is None else conv.bias.detach()[:, None].contiguous())
+
+            def forward(self, x):  # B, C, T
+                y = torch.matmul(self.weight, x)
+                return y if self.bias is None else y + self.bias
+
+        count = 0
+        for name, child in module.named_children():
+            if (
+                isinstance(child, nn.Conv1d)
+                and child.kernel_size == (1,)
+                and child.groups == 1
+                and child.stride == (1,)
+                and child.padding in (0, (0,))
+                and child.dilation == (1,)
+            ):
+                setattr(module, name, Pointwise(child))
+                count += 1
+            else:
+                count += _Pointwise.swap(child)
+        return count
+
+
+def _pick_device(torch):
+    """The Mac's graphics chip when it is there, otherwise the processor."""
+    try:
+        if torch.backends.mps.is_available():
+            return torch.device("mps")
+    except Exception:
+        pass
+    return torch.device("cpu")
+
+
 class Restorer:
     """Loads Apollo once and restores stems (numpy arrays, frames x channels)."""
 
-    def __init__(self, spec: RestorerSpec) -> None:
+    def __init__(self, spec: RestorerSpec, device: str | None = None) -> None:
         import torch
 
         from .apollo import Apollo
@@ -163,11 +212,44 @@ class Restorer:
             )
         net.load_state_dict(state)
         net.eval()
-        self._net = net
+        _Pointwise.swap(net)
         self._torch = torch
+        self._cpu_net = net
+        import os
 
-    def restore(self, audio: np.ndarray, progress=None) -> np.ndarray:
-        """Return the restored audio, same shape as ``audio`` (frames, channels), float32."""
+        device = device or os.environ.get("STEMN_APOLLO_DEVICE") or None
+        self.device = torch.device(device) if device else _pick_device(torch)
+        self._net = net
+        if self.device.type != "cpu":
+            try:
+                import copy
+
+                self._net = copy.deepcopy(net).to(self.device)
+            except Exception:
+                self.device, self._net = torch.device("cpu"), net
+        print(f"stemn: Apollo rechnet auf {'dem Grafikchip' if self.device.type == 'mps' else 'dem Prozessor'} ({self.device.type})", file=sys.stderr)
+
+    def _run(self, piece: np.ndarray) -> np.ndarray:
+        """One piece through the network; falls back to the processor if the graphics chip fails."""
+        torch = self._torch
+        x = torch.from_numpy(np.ascontiguousarray(piece.T)).unsqueeze(0)  # 1, ch, n
+        if self.device.type != "cpu":
+            try:
+                y = self._net(x.to(self.device))[0].float().cpu().numpy().T
+                if np.all(np.isfinite(y)) and float(np.abs(y).max(initial=0.0)) < 8.0:
+                    return y
+            except Exception:
+                pass
+            print("stemn: Grafikchip liefert kein brauchbares Ergebnis, rechne auf dem Prozessor weiter", file=sys.stderr)
+            self.device, self._net = torch.device("cpu"), self._cpu_net
+        return self._net(x)[0].numpy().T
+
+    def restore(self, audio: np.ndarray, progress=None, quiet_peak: float = QUIET_PEAK) -> np.ndarray:
+        """Return the restored audio, same shape as ``audio`` (frames, channels), float32.
+
+        Pieces whose peak stays below ``quiet_peak`` are passed through unchanged: there is
+        nothing in them to repair, and skipping them saves most of the time on sparse stems.
+        """
         torch = self._torch
         audio = np.asarray(audio, dtype=np.float32)
         if audio.ndim == 1:
@@ -184,8 +266,10 @@ class Restorer:
             for i, start in enumerate(starts):
                 piece = audio[start : start + chunk]
                 n = piece.shape[0]
-                x = torch.from_numpy(np.ascontiguousarray(piece.T)).unsqueeze(0)  # 1, ch, n
-                y = self._net(x)[0].numpy().T[:n]
+                if float(np.abs(piece).max()) < quiet_peak:
+                    y = piece
+                else:
+                    y = self._run(piece)[:n]
                 w = np.ones((n, 1), dtype=np.float32)
                 if len(starts) > 1:
                     ramp = np.linspace(0.0, 1.0, min(fade, n), dtype=np.float32)[:, None]

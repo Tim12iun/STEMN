@@ -72,6 +72,7 @@ jobs:
           --collect-all audio_separator
           --hidden-import stemn._build_token
           --collect-data librosa
+          --collect-data certifi
           --copy-metadata audio-separator
           --add-data "models${{ runner.os == 'Windows' && ';' || ':' }}models"
           --add-data "src/stemn/fonts${{ runner.os == 'Windows' && ';' || ':' }}stemn/fonts"
@@ -95,7 +96,16 @@ jobs:
           python -c "import numpy as np, soundfile as sf; sf.write('smoke.wav', np.zeros((44100,2),'float32'), 44100)"
           "$EXE" separate smoke.wav -s kick -o smoke-out --result-file smoke.json
           ls smoke-out | grep -q "kick"
-          "$EXE" separate smoke.wav -s kick -m drumsep-mdx23c-5stem --restore -o smoke-restore
+          # Apollo skips silence, so give it real sound and time it
+          python -c "import numpy as np, soundfile as sf; sf.write('noise.wav', (np.random.default_rng(0).standard_normal((4*44100,2))*0.1).astype('float32'), 44100)"
+          time "$EXE" separate noise.wav -s kick -m drumsep-mdx23c-5stem --restore -o smoke-restore
+          echo "--- zum Vergleich nur Prozessor:"
+          time STEMN_APOLLO_DEVICE=cpu "$EXE" separate noise.wav -s kick -m drumsep-mdx23c-5stem --restore -o smoke-restore-cpu
+          ls smoke-restore | grep -q "kick"
+          # update check must reach GitHub (certificates bundled)
+          out=$("$EXE" update --check 2>&1) || true
+          echo "$out"
+          if echo "$out" | grep -qi "certificate"; then exit 1; fi
           grep -q '"stems"' smoke.json
       - name: Packen
         shell: bash
@@ -109,10 +119,15 @@ jobs:
             ditto -c -k --keepParent stemn.app ../${{ matrix.name }}.zip
             zip -qry ../${{ matrix.name }}-app.zip stemn.app -x '*.ckpt' '*.th'
           fi
-      - uses: actions/upload-artifact@v4
+      # one plain .zip per download (no zip inside a zip); the .zip keeps the app's permissions
+      - uses: actions/upload-artifact@v7
         with:
-          name: ${{ matrix.name }}
-          path: ${{ matrix.name }}*.zip
+          path: ${{ matrix.name }}.zip
+          archive: false
+      - uses: actions/upload-artifact@v7
+        with:
+          path: ${{ matrix.name }}-app.zip
+          archive: false
 
   release:
     if: startsWith(github.ref, 'refs/tags/v') || inputs.version != ''
@@ -121,7 +136,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           merge-multiple: true
       - uses: softprops/action-gh-release@v2

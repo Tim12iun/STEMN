@@ -7,7 +7,6 @@ so a stem can be dropped onto the same position in a DAW and stays on the grid.
 from __future__ import annotations
 
 import logging
-import math
 import re
 import tempfile
 import threading
@@ -67,12 +66,25 @@ def conform(stem_file: Path, reference: sf._SoundFileInfo, target: Path) -> Path
     return target
 
 
+CHUNK_HINT_SECONDS = 3.0  # Apollo piece length, for the first estimate before anything is measured
+STEM_LABELS = {"kick": "Kick", "snare": "Snare", "toms": "Toms", "hh": "Hi-Hat", "hihat": "Hi-Hat", "ride": "Ride", "crash": "Crash", "cymbals": "Becken"}
+
+
+def _seconds(path: Path) -> float:
+    try:
+        info = sf.info(str(path))
+        return info.frames / info.samplerate
+    except Exception:
+        return 0.0
+
+
 class Engine:
     """Keeps one model loaded so repeated calls (Max for Live, app) are fast."""
 
     def __init__(self) -> None:
         self._separator = None
-        self._restore_rate = 4.0  # seconds of work per second of audio; learned after each stem
+        self._restore_rate = 4.0  # seconds of work per second of audio; learned while Apollo runs
+        self._restore_rate_known = False
         self._model_id: str | None = None
         self._restorer = None
         self._lock = threading.Lock()
@@ -111,34 +123,62 @@ class Engine:
             self._restorer = Restorer(spec)
         return self._restorer
 
-    def _restore_file(self, restorer, path: Path, progress) -> Path:
-        """Restore one raw stem file into a new file next to it (at the restorer's sample rate)."""
+    def _restore_file(self, restorer, path: Path, progress, status=None, label: str = "", later_seconds: float = 0.0) -> Path:
+        """Restore one raw stem file into a new file next to it (at the restorer's sample rate).
+
+        ``progress`` gets 0..1 for this stem. ``status`` (optional) gets a short German line with
+        the estimated time left, ``later_seconds`` being the audio still to come after this stem.
+        """
         audio, sr = sf.read(str(path), dtype="float32", always_2d=True)
         if sr != restorer.sample_rate:
             import librosa
 
             audio = librosa.resample(audio.T, orig_sr=sr, target_sr=restorer.sample_rate).T
-        # Apollo reports only after each 10 s chunk, so a short loop would sit at one value for a
-        # minute and look frozen. Tick the bar along an estimate meanwhile (never past 90 %).
         seconds = len(audio) / restorer.sample_rate
-        expected = max(seconds * self._restore_rate, 1.0)
-        done = threading.Event()
+        state = {"done": 0.0, "since": time.monotonic(), "step": None}
+        measured = {"work": 0.0, "audio": 0.0}
+        stop = threading.Event()
+
+        def eta_text() -> str:
+            if self._restore_rate_known:
+                left_audio = seconds * (1.0 - state["done"]) + later_seconds
+                left = left_audio * self._restore_rate
+                when = "noch unter 1 min" if left < 60 else f"noch ca. {round(left / 60)} min"
+                return f"Apollo repariert {label} · {when}"
+            return f"Apollo repariert {label}"
+
+        def on_piece(fraction: float) -> None:
+            now = time.monotonic()
+            took = now - state["since"]
+            step = fraction - state["done"]
+            if took > 0.5 and step > 0:  # a piece that really ran (quiet ones are skipped instantly)
+                measured["work"] += took
+                measured["audio"] += step * seconds
+                self._restore_rate = measured["work"] / measured["audio"]
+                self._restore_rate_known = True
+                state["step"] = step
+            state["done"], state["since"] = fraction, now
+            progress(fraction)
 
         def tick() -> None:
-            began = time.monotonic()
-            while not done.wait(0.4):
-                progress(min(0.9, 1.0 - math.exp(-(time.monotonic() - began) / expected)))
+            # between two pieces the bar keeps creeping towards the next one (never past it)
+            while not stop.wait(0.5):
+                step = state["step"] or min(1.0, CHUNK_HINT_SECONDS / max(seconds, 1e-6))
+                expected = max(step * seconds * self._restore_rate, 0.5)
+                part = min(0.9, (time.monotonic() - state["since"]) / expected)
+                progress(min(1.0, state["done"] + step * part))
+                if status:
+                    status(eta_text())
 
+        if status:
+            status(eta_text())
         ticker = threading.Thread(target=tick, daemon=True)
-        began = time.monotonic()
         ticker.start()
         try:
-            restored = restorer.restore(audio, progress=lambda v: None)
+            restored = restorer.restore(audio, progress=on_piece)
         finally:
-            done.set()
+            stop.set()
             ticker.join()
-        if seconds > 0:
-            self._restore_rate = (time.monotonic() - began) / seconds  # better guess for the next stem
         progress(1.0)
         target = path.with_name(path.stem + "_restored.wav")
         sf.write(str(target), restored, restorer.sample_rate, subtype="FLOAT")
@@ -154,6 +194,7 @@ class Engine:
         progress=None,
         restore: bool = False,
         bleed: str = "off",
+        status=None,
     ) -> dict[str, Path]:
         """Separate ``input_path``; return ``{canonical_stem: wav_path}``.
 
@@ -161,6 +202,7 @@ class Engine:
         ``progress`` is called with values from 0 to 1.
         ``restore`` runs the restoration model (Apollo) on every stem afterwards.
         ``bleed`` ("off", "light", "strong") damps cross-talk between the stems first.
+        ``status`` (optional) gets short German lines on what is happening, e.g. time left.
         """
         report = progress or (lambda _v: None)
         report(0.0)
@@ -208,7 +250,11 @@ class Engine:
                 span = (0.95 - split_end) / max(len(todo), 1)
                 for i, stem in enumerate(todo):
                     start = split_end + i * span
-                    raw_files[stem] = self._restore_file(restorer, raw_files[stem], lambda v, a=start: report(a + span * v))
+                    later = sum(_seconds(raw_files[s]) for s in todo[i + 1 :])
+                    label = f"{STEM_LABELS.get(stem, stem)} ({i + 1} von {len(todo)})"
+                    raw_files[stem] = self._restore_file(
+                        restorer, raw_files[stem], lambda v, a=start: report(a + span * v), status, label, later
+                    )
                 report(0.95)
             result: dict[str, Path] = {}
             for stem, path in raw_files.items():
@@ -289,7 +335,9 @@ def default_engine() -> Engine:
     return _default_engine
 
 
-def separate(input_path, stems=None, model_id=None, output_dir=None, quality="best", progress=None, restore=False, bleed="off") -> dict[str, Path]:
+def separate(
+    input_path, stems=None, model_id=None, output_dir=None, quality="best", progress=None, restore=False, bleed="off", status=None
+) -> dict[str, Path]:
     return default_engine().separate(
-        input_path, stems=stems, model_id=model_id, output_dir=output_dir, quality=quality, progress=progress, restore=restore, bleed=bleed
+        input_path, stems=stems, model_id=model_id, output_dir=output_dir, quality=quality, progress=progress, restore=restore, bleed=bleed, status=status
     )

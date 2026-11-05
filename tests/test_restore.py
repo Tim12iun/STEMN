@@ -97,6 +97,7 @@ def test_restore_progress_keeps_moving_while_apollo_works(tmp_path):
 
         def restore(self, audio, progress=None):
             time.sleep(1.5)
+            progress(1.0)
             return audio
 
     path = tmp_path / "stem_kick.wav"
@@ -104,9 +105,37 @@ def test_restore_progress_keeps_moving_while_apollo_works(tmp_path):
     engine = Engine()
     engine._restore_rate = 1.0
     seen = []
-    out = engine._restore_file(SlowRestorer(), path, seen.append)
+    notes = []
+    out = engine._restore_file(SlowRestorer(), path, seen.append, notes.append, "Kick (1 von 1)", later_seconds=2.0)
     assert out.is_file()
-    ticks = seen[:-1]
+    ticks = seen[: seen.index(1.0)]
     assert len(ticks) >= 2 and ticks == sorted(ticks) and 0 < ticks[-1] <= 0.9
     assert seen[-1] == 1.0
     assert 1.0 < engine._restore_rate < 3.0  # learned from this stem
+    assert notes and notes[0].startswith("Apollo repariert Kick (1 von 1)")
+
+
+def test_quiet_pieces_are_passed_through_without_the_network(tmp_path):
+    """Sparse stems (toms, crash): only pieces with sound go through Apollo."""
+    calls = []
+    r = restore.Restorer.__new__(restore.Restorer)
+    r.sample_rate = 44100
+    r._torch = torch
+    r._run = lambda piece: calls.append(len(piece)) or piece * 0.5
+    audio = np.zeros((44100 * 9, 2), np.float32)
+    audio[: 44100] = 0.5  # sound only in the first second
+    audio[44100 * 5 : 44100 * 6] = 1e-4  # bleed residue, below -50 dBFS
+    out = r.restore(audio)
+    assert len(calls) == 1
+    assert np.allclose(out[44100 * 5 : 44100 * 6], 1e-4)
+
+
+def test_pointwise_swap_keeps_the_result():
+    net = Apollo(sr=44100, win=20, feature_dim=32, layer=1).eval()
+    x = torch.randn(1, 2, 44100 // 2) * 0.1
+    with torch.inference_mode():
+        before = net(x)
+        swapped = restore._Pointwise.swap(net)
+        after = net(x)
+    assert swapped > 0
+    assert torch.allclose(before, after, atol=1e-5)

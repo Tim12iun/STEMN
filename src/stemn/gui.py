@@ -337,9 +337,11 @@ def stop_separations() -> None:
     _RUNNING.clear()
 
 
-def _read_progress(path: Path) -> float | None:
+def _read_progress(path: Path) -> tuple[float, str] | None:
+    """(value, status line) from the child's progress file, or None while it is not readable."""
     try:
-        return min(max(float(path.read_text(encoding="utf-8")), 0.0), 1.0)
+        first, _, note = path.read_text(encoding="utf-8").partition("\n")
+        return min(max(float(first), 0.0), 1.0), note.strip()
     except (OSError, ValueError):
         return None
 
@@ -347,7 +349,7 @@ def _read_progress(path: Path) -> float | None:
 def run_separation(path: Path, model_id: str | None, progress=None, restore: bool = False, bleed: str = "off") -> dict:
     """Run the separation in a child process. Returns {stem: path} or raises RuntimeError.
 
-    ``progress`` (optional) is called with values from 0 to 1 while it runs.
+    ``progress`` (optional) is called with (value 0..1, status line) while it runs.
     """
     import json
     import subprocess
@@ -374,7 +376,7 @@ def run_separation(path: Path, model_id: str | None, progress=None, restore: boo
             while proc.poll() is None:
                 value = _read_progress(progress_file)
                 if progress and value is not None and value != last:
-                    progress(value)
+                    progress(*value)
                     last = value
                 time.sleep(0.15)
             _RUNNING.discard(proc)
@@ -402,7 +404,7 @@ def run_separation(path: Path, model_id: str | None, progress=None, restore: boo
 class SeparateWorker(QObject):
     finished = Signal(dict)
     failed = Signal(str)
-    progress = Signal(float)
+    progress = Signal(float, str)
 
     def __init__(self, path: Path, model_id: str | None, restore: bool = False, bleed: str = "off") -> None:
         super().__init__()
@@ -849,13 +851,14 @@ class WaveformView(QWidget):
         dim.addRoundedRect(QRectF(r), 12, 12)
         p.fillPath(dim, QColor(20, 20, 20, 150))  # dim the loop underneath
         w = min(380.0, r.width() - 80.0)
-        box = QRectF(r.center().x() - w / 2 - 20, r.center().y() - 38, w + 40, 76)
+        box = QRectF(r.center().x() - w / 2 - 20, r.center().y() - 46, w + 40, 92)
         p.setPen(Qt.NoPen)
         p.setBrush(QColor(RAISED))
         p.drawRoundedRect(box, 10, 10)
         p.setPen(QColor(TEXT))
         p.setFont(QFont(FONT_FAMILY, 15, QFont.DemiBold))
-        p.drawText(QRectF(box.left() + 20, box.top() + 12, w * 0.7, 24), Qt.AlignLeft | Qt.AlignVCenter, self.busy_text)
+        title, _, detail = self.busy_text.partition(" · ")  # e.g. "Apollo repariert Snare (2 von 6) · noch ca. 3 min"
+        p.drawText(QRectF(box.left() + 20, box.top() + 12, w * 0.8, 24), Qt.AlignLeft | Qt.AlignVCenter, title)
         p.setFont(tabular_font(15))
         p.drawText(QRectF(box.left() + 20, box.top() + 12, w, 24), Qt.AlignRight | Qt.AlignVCenter, f"{round(self.progress * 100)} %")
         bar = QRectF(box.left() + 20, box.top() + 48, w, 6)
@@ -864,6 +867,10 @@ class WaveformView(QWidget):
         if self.progress > 0:
             p.setBrush(QColor(ACCENT))
             p.drawRoundedRect(QRectF(bar.left(), bar.top(), max(bar.width() * self.progress, 6), bar.height()), 3, 3)
+        if detail:
+            p.setPen(QColor(MUTED))
+            p.setFont(QFont(FONT_FAMILY, 12))
+            p.drawText(QRectF(box.left() + 20, box.top() + 62, w, 20), Qt.AlignLeft | Qt.AlignVCenter, detail)
 
     # interaction
     def mousePressEvent(self, e):
@@ -941,7 +948,24 @@ class MainWindow(QMainWindow):
         self.status = QLabel("Drum-Loop hierher ziehen, am besten eine reine Drum-Spur")
         self.status.setObjectName("muted")
         self.status.setWordWrap(True)
-        wave_box.addWidget(self.status)
+        status_row = QHBoxLayout()
+        status_row.setContentsMargins(0, 0, 0, 0)
+        status_row.addWidget(self.status, 1)
+        # only visible while separating; its space is always kept, so nothing moves when it appears
+        self.cancel_btn = QPushButton("Abbrechen")
+        self.cancel_btn.setToolTip("Trennen abbrechen · Esc")
+        self.cancel_btn.clicked.connect(self.cancel_separation)
+        policy = self.cancel_btn.sizePolicy()
+        policy.setRetainSizeWhenHidden(True)
+        self.cancel_btn.setSizePolicy(policy)
+        self.cancel_btn.hide()
+        status_row.addWidget(self.cancel_btn, 0, Qt.AlignTop)
+        wave_box.addLayout(status_row)
+        from PySide6.QtGui import QKeySequence, QShortcut
+
+        esc = QShortcut(QKeySequence(Qt.Key_Escape), self)
+        esc.setContext(Qt.WindowShortcut)
+        esc.activated.connect(self.cancel_separation)
         body.addLayout(wave_box, 1)
         body.addWidget(self._build_panel())
         outer.addLayout(body, 1)
@@ -1199,6 +1223,8 @@ class MainWindow(QMainWindow):
         self.status.setText("Trennt in bester Qualität · der Loop lässt sich währenddessen weiter abspielen")
         self.import_btn.setEnabled(False)
         self.separate_btn.setEnabled(False)
+        self._cancelled = False
+        self.cancel_btn.show()
 
         self._thread = QThread(self)
         self._restoring = self.restore_btn.isChecked() and not self.restore_btn.isHidden()
@@ -1219,19 +1245,34 @@ class MainWindow(QMainWindow):
         self.play_btn.setChecked(False)
         self.play_btn.setText("▶")
 
-    def on_progress(self, value: float) -> None:
+    def on_progress(self, value: float, note: str = "") -> None:
         restoring = getattr(self, "_restoring", False) and value >= 0.55
+        if note and restoring and value < 0.95:
+            self.wave.set_progress(value, note)
+            return
         text = "Modell wird geladen" if value < 0.08 else "Apollo repariert die Spuren (dauert etwas)" if restoring and value < 0.95 else "Trenne Spuren" if value < 0.95 else "Spuren werden gespeichert"
         self.wave.set_progress(value, text)
 
+    def cancel_separation(self) -> None:
+        if self._thread is None:
+            return
+        self._cancelled = True
+        stop_separations()
+
     def _cleanup_thread(self) -> None:
         self._thread = None
+        self.cancel_btn.hide()
         self.import_btn.setEnabled(True)
         self.separate_btn.setEnabled(self.source is not None)
 
     def on_failed(self, msg: str) -> None:
         if getattr(self, "_closing", False):
             return  # we ended the separation ourselves
+        if getattr(self, "_cancelled", False):
+            self.wave.progress = None
+            self.wave.update()
+            self.status.setText("Abgebrochen. Mit TRENNEN neu starten.")
+            return
         self.wave.progress = None
         self.wave.update()
         self.status.setText(f"Fehler beim Trennen: {msg}")

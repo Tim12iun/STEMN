@@ -105,7 +105,19 @@ class _DropAuthOnRedirect(urllib.request.HTTPRedirectHandler):
         return new
 
 
-_opener = urllib.request.build_opener(_DropAuthOnRedirect)
+def _ssl_context():
+    """The bundled app has no system certificate path, so use certifi's list when it is there."""
+    import ssl
+
+    try:
+        import certifi
+
+        return ssl.create_default_context(cafile=certifi.where())
+    except Exception:  # pragma: no cover - certifi missing: fall back to the system store
+        return ssl.create_default_context()
+
+
+_opener = urllib.request.build_opener(_DropAuthOnRedirect, urllib.request.HTTPSHandler(context=_ssl_context()))
 
 
 def _request(url: str, accept: str = "application/vnd.github+json"):
