@@ -89,7 +89,7 @@ def ensure_model(progress=None, folder: Path | None = None) -> ModelSpec:
         if target.is_file():
             continue
         tmp = target.with_suffix(target.suffix + ".part")
-        with urllib.request.urlopen(_BASE + name, timeout=60) as resp, open(tmp, "wb") as out:
+        with _open(_BASE + name) as resp, open(tmp, "wb") as out:
             total = int(resp.headers.get("Content-Length") or 0)
             done = 0
             while chunk := resp.read(1 << 20):
@@ -103,6 +103,21 @@ def ensure_model(progress=None, folder: Path | None = None) -> ModelSpec:
         tmp.replace(target)
     report(1.0)
     return spec
+
+
+def _open(url: str, method: str = "GET"):
+    """urlopen with the certificates bundled in the app (the packaged app has no
+    system certificate path, plain urlopen fails with CERTIFICATE_VERIFY_FAILED)."""
+    from .updater import _ssl_context
+
+    req = urllib.request.Request(url, method=method, headers={"User-Agent": "stemn"})
+    return urllib.request.urlopen(req, timeout=60, context=_ssl_context())
+
+
+def check_download() -> int:
+    """Reach the model download without loading it; returns its size in bytes."""
+    with _open(_BASE + FILES["checkpoint"][0], method="HEAD") as resp:
+        return int(resp.headers.get("Content-Length") or 0)
 
 
 def _crossover_gain(freqs: np.ndarray) -> np.ndarray:

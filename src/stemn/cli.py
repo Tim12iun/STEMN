@@ -36,8 +36,13 @@ def _cmd_separate(args) -> int:
 
 
 def _cmd_dereverb(args) -> int:
-    from .dereverb import dereverb
+    from .dereverb import check_download, dereverb
 
+    if args.check_download:  # used by the build: the download must work in the packaged app
+        print(f"De-Reverb-Modell erreichbar: {check_download() / 1e6:.0f} MB")
+        return 0
+    if not args.input:
+        raise ValueError("Bitte eine Audiodatei angeben")
     progress = status = None
     if args.progress_file:
         progress, status = _progress_writer(args.progress_file)
@@ -157,7 +162,8 @@ def build_parser() -> argparse.ArgumentParser:
     s.set_defaults(func=_cmd_separate)
 
     d = sub.add_parser("dereverb", help="Hall aus einem Loop oder Stem entfernen")
-    d.add_argument("input", help="WAV/AIFF/FLAC-Datei")
+    d.add_argument("input", nargs="?", help="WAV/AIFF/FLAC-Datei")
+    d.add_argument("--check-download", action="store_true", help=argparse.SUPPRESS)
     d.add_argument("-o", "--output", help="Zieldatei (Standard: '<Datei> dereverb.wav' im Stems-Ordner)")
     d.add_argument("--result-file", help=argparse.SUPPRESS)  # used by the app window
     d.add_argument("--progress-file", help=argparse.SUPPRESS)  # used by the app window

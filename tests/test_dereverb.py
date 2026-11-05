@@ -39,3 +39,26 @@ def test_model_lives_outside_the_separation_models(tmp_path, monkeypatch):
 def test_cli_has_dereverb_command():
     args = build_parser().parse_args(["dereverb", "loop.wav", "-o", "out.wav"])
     assert args.input == "loop.wav" and args.output == "out.wav"
+
+
+def test_download_uses_bundled_certificates(monkeypatch):
+    import urllib.request
+
+    seen = {}
+
+    class Resp:
+        headers = {"Content-Length": "5"}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    def fake_urlopen(req, timeout=None, context=None):
+        seen["context"] = context
+        return Resp()
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    assert dereverb.check_download() == 5
+    assert seen["context"] is not None  # the packaged app has no system certificates
