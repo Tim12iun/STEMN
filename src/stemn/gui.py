@@ -725,24 +725,70 @@ class DereverbButton(QPushButton):
     """D: take the reverb out of this track.
 
     While the reverb is being removed the button fills up from left to right in
-    orange; when it is done it glows like S. After that it only switches between
-    the original and the version without reverb (both stay in the cache).
+    orange; when it is done it glows like S. After that a click only switches
+    between the original and the version without reverb (both stay in the cache).
+
+    Dragging a glowing D sideways (or up/down) sets how much reverb is taken out,
+    0..100 %; the button is then filled only that far.
     """
+
+    amount_preview = Signal(float)  # while dragging
+    amount_changed = Signal(float)  # on release
+
+    DRAG_PIXELS = 100  # 100 px of mouse movement = 0..100 %
 
     def __init__(self) -> None:
         super().__init__("D")
         self.setObjectName("small")
         self.setCheckable(True)
         self.fill: float | None = None  # 0..1 while working
-        self.setToolTip("D: Hall entfernen (De-Reverb) · danach an/aus wechselt zwischen Original und ohne Hall")
+        self.amount = 1.0  # how much of the reverb is taken out when D is on
+        self._press = None
+        self._dragging = False
+        self.setToolTip(
+            "D: Hall entfernen (De-Reverb) · danach Klick: an/aus\n"
+            "Leuchtendes D seitlich ziehen: wie viel Hall raus ist (0–100 %)"
+        )
 
     def set_fill(self, value: float | None) -> None:
         self.fill = None if value is None else min(max(value, 0.0), 1.0)
         self.update()
 
+    def set_amount(self, value: float) -> None:
+        self.amount = round(min(max(value, 0.0), 1.0), 2)
+        self.update()
+
+    def mousePressEvent(self, e):
+        self._press = (e.position(), self.amount)
+        self._dragging = False
+        super().mousePressEvent(e)
+
+    def mouseMoveEvent(self, e):
+        if self._press is None or not self.isChecked() or self.fill is not None:
+            return super().mouseMoveEvent(e)
+        start, amount = self._press
+        d = (e.position().x() - start.x()) - (e.position().y() - start.y())
+        if not self._dragging and abs(d) < 4:
+            return
+        self._dragging = True
+        self.set_amount(amount + d / self.DRAG_PIXELS)
+        self.amount_preview.emit(self.amount)
+
+    def mouseReleaseEvent(self, e):
+        self._press = None
+        if self._dragging:
+            self._dragging = False
+            self.setDown(False)  # a drag is no click: D stays on
+            self.amount_changed.emit(self.amount)
+            return
+        super().mouseReleaseEvent(e)
+
     def paintEvent(self, e):
         super().paintEvent(e)
-        if self.fill is None:
+        level = self.fill
+        if level is None and self.isChecked() and self.amount < 0.995:
+            level = self.amount  # partly: only this much reverb is taken out
+        if level is None:
             return
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
@@ -752,7 +798,7 @@ class DereverbButton(QPushButton):
         p.setClipPath(clip)
         fill = QColor(ACCENT)
         fill.setAlpha(150)
-        p.fillRect(QRectF(r.left(), r.top(), r.width() * self.fill, r.height()), fill)
+        p.fillRect(QRectF(r.left(), r.top(), r.width() * level, r.height()), fill)
         p.setClipping(False)
         p.setPen(QPen(QColor(ACCENT), 1))
         p.setBrush(Qt.NoBrush)
@@ -770,6 +816,8 @@ class StemStrip(QFrame):
     name_clicked = Signal(str)
     solo_clicked = Signal(str)
     dereverb_clicked = Signal(str)
+    amount_preview = Signal(str, float)
+    amount_changed = Signal(str, float)
 
     def __init__(self, stem: str, path: Path) -> None:
         super().__init__()
@@ -809,6 +857,8 @@ class StemStrip(QFrame):
         self.check.clicked.connect(lambda: self.name_clicked.emit(self.stem))
         self.solo.clicked.connect(lambda: self.solo_clicked.emit(self.stem))
         self.d.clicked.connect(lambda: self.dereverb_clicked.emit(self.stem))
+        self.d.amount_preview.connect(lambda a: self.amount_preview.emit(self.stem, a))
+        self.d.amount_changed.connect(lambda a: self.amount_changed.emit(self.stem, a))
         self.db.installEventFilter(self)
 
         try:
@@ -842,8 +892,26 @@ class StemStrip(QFrame):
 
     @property
     def path(self) -> Path:
-        """The version that plays and gets dragged: without reverb when D is on."""
-        return self.dry if (self.dry is not None and self.d.isChecked()) else self.original
+        """The version that plays and gets dragged: without reverb when D is on.
+
+        With D dragged below 100 % it is a blend: original * (1 - a) + dry * a,
+        i.e. the dry track plus that much of the reverb that was taken out.
+        """
+        if self.dry is None or not self.d.isChecked():
+            return self.original
+        a = self.d.amount
+        if a >= 0.995:
+            return self.dry
+        if a <= 0.005:
+            return self.original
+        pct = round(a * 100)
+        target = self.dry.with_name(f"{self.dry.stem} {pct}.wav")
+        if not target.is_file():
+            orig, sr = sf.read(str(self.original), dtype="float32", always_2d=True)
+            dry, _ = sf.read(str(self.dry), dtype="float32", always_2d=True)
+            n = min(len(orig), len(dry))
+            sf.write(str(target), orig[:n] * (1 - pct / 100) + dry[:n] * (pct / 100), sr, subtype="PCM_24")
+        return target
 
     def _drag_path(self) -> Path:
         return self.path
@@ -1471,6 +1539,8 @@ class MainWindow(QMainWindow):
             row.name_clicked.connect(self.toggle_stem)
             row.solo_clicked.connect(self.toggle_solo)
             row.dereverb_clicked.connect(self.toggle_dereverb)
+            row.amount_preview.connect(self.on_amount_preview)
+            row.amount_changed.connect(self.on_amount_changed)
             cached = self.dry_cache.get(self._cache_key(row.original))
             if cached is not None and cached.is_file():
                 row.dry = cached  # computed earlier in this session: D is ready, still off
@@ -1566,11 +1636,22 @@ class MainWindow(QMainWindow):
         if row is None:
             return
         row.dry = Path(path)
+        for old in row.dry.parent.glob(f"{row.dry.stem} *.wav"):  # blends of an earlier run
+            old.unlink(missing_ok=True)
         self.dry_cache[self._cache_key(row.original)] = row.dry
         row.d.set_fill(None)
         row.d.setChecked(True)
         self._reload_audio()
         self.status.setText("D an: ohne Hall · D noch mal: Original · Ziehen nimmt die gewählte Version")
+
+    def on_amount_preview(self, stem: str, amount: float) -> None:
+        label = STEM_LABELS.get(stem, stem.title())
+        self.status.setText(f"{label}: {round(amount * 100)} % Hall raus · loslassen übernimmt")
+
+    def on_amount_changed(self, stem: str, amount: float) -> None:
+        self._reload_audio()
+        label = STEM_LABELS.get(stem, stem.title())
+        self.status.setText(f"{label}: {round(amount * 100)} % Hall raus · Ziehen nach Ableton nimmt genau diese Mischung")
 
     def _reload_audio(self) -> None:
         """Load the selected versions (D on/off) and keep playing where it was."""

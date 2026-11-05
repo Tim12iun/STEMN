@@ -371,3 +371,32 @@ def test_failed_dereverb_leaves_d_off(window, app, monkeypatch):
     _wait_for_job(window, app)
     assert not row.d.isChecked() and row.d.fill is None and row.dry is None
     assert row.path == row.original
+
+
+def test_dragging_d_blends_reverb_back_in(window, app, monkeypatch):
+    from PySide6.QtCore import QPoint, Qt
+    from PySide6.QtTest import QTest
+
+    def fake_dereverb(path, progress=None):
+        out = path.parent / f"{path.stem} dereverb.wav"
+        audio, sr = sf.read(str(path), dtype="float32", always_2d=True)
+        sf.write(out, audio * 0.0, sr)  # "dry" = silence, so the blend shows the reverb share
+        return out
+
+    monkeypatch.setattr(gui, "run_dereverb", fake_dereverb)
+    row = window.rows[0]  # kick, level 0.1
+    row.d.click()
+    _wait_for_job(window, app)
+    assert row.d.isChecked() and row.d.amount == 1.0
+    window.show()
+    c = row.d.rect().center()
+    QTest.mousePress(row.d, Qt.LeftButton, Qt.NoModifier, c)
+    QTest.mouseMove(row.d, c - QPoint(40, 0))  # 40 px left: 60 % reverb taken out
+    QTest.mouseRelease(row.d, Qt.LeftButton, Qt.NoModifier, c - QPoint(40, 0))
+    app.processEvents()
+    assert row.d.isChecked()  # a drag does not switch D off
+    assert row.d.amount == 0.6
+    assert row.path.name.endswith("dereverb 60.wav")
+    audio, _ = sf.read(str(row.path), dtype="float32", always_2d=True)
+    assert np.isclose(audio.max(), 0.04, atol=1e-3)  # 40 % of the reverb (= the original here) is back
+    assert window.stems["kick"] == row.path
