@@ -136,9 +136,15 @@ jobs:
     permissions:
       contents: write
     steps:
+      # the packages were uploaded as plain .zip files: keep them as they are, do not unpack
       - uses: actions/download-artifact@v8
         with:
           merge-multiple: true
+          skip-decompress: true
+      - name: Pakete pruefen
+        run: |
+          ls -la
+          ls *.zip >/dev/null
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ inputs.version != '' && format('v{0}', inputs.version) || github.ref_name }}
