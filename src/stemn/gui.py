@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import os
 import sys
 import threading
 from pathlib import Path
 
 import numpy as np
 import soundfile as sf
-from PySide6.QtCore import QMimeData, QObject, QPointF, QRectF, Qt, QThread, QTimer, QUrl, Signal
+from PySide6.QtCore import QMimeData, QObject, QPointF, QRectF, QSize, Qt, QThread, QTimer, QUrl, Signal
 from PySide6.QtGui import QColor, QDesktopServices, QDrag, QFont, QLinearGradient, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import (
     QApplication,
@@ -70,21 +71,24 @@ QLabel#section {{ color: {MUTED}; font-size: 12px; font-weight: 600; letter-spac
 QLabel#muted {{ color: {MUTED}; background: transparent; }}
 QLabel#time {{ color: {TEXT}; }}
 QLabel#file {{ color: {TEXT}; }}
-QPushButton {{ background: {RAISED}; border: none; border-radius: 6px; padding: 6px 12px; color: {TEXT}; }}
+QPushButton {{ background: {RAISED}; border: 1px solid transparent; border-radius: 6px; padding: 5px 11px; color: {TEXT}; }}
 QPushButton:hover {{ background: {RAISED2}; }}
 QPushButton:pressed {{ background: #1A1918; }}
 QPushButton:disabled {{ color: #5b5955; background: #1d1c1b; }}
 QPushButton:focus {{ outline: none; }}
-QPushButton#primary {{ background: {ACCENT}; color: #141414; font-weight: 700; letter-spacing: 1px; padding: 6px 16px; }}
+QPushButton#primary {{ background: {ACCENT}; color: #141414; font-weight: 700; letter-spacing: 1px; padding: 5px 15px; }}
 QPushButton#primary:hover {{ background: #EC6636; }}
 QPushButton#primary:disabled {{ background: #4a2a1e; color: #8a6a5e; }}
-QPushButton#icon {{ font-size: 17px; padding: 3px 0; }}
-QPushButton#transport {{ min-width: 38px; max-width: 38px; padding: 6px 0; }}
+QPushButton#primary[lit="false"] {{ background: {RAISED2}; color: {TEXT}; }}
+QPushButton#primary[lit="false"]:hover {{ background: {LINE}; }}
+QPushButton#primary[lit="false"]:disabled {{ background: {RAISED}; color: {MUTED}; }}
+QPushButton#icon {{ font-size: 17px; padding: 2px 0; }}
+QPushButton#transport {{ min-width: 38px; max-width: 38px; padding: 5px 0; }}
 QPushButton#transport:checked {{ border: 1px solid {ACCENT}; color: {ACCENT}; }}
-QPushButton#small {{ padding: 2px 0; min-width: 26px; max-width: 26px; font-weight: 700; }}
+QPushButton#small {{ padding: 1px 0; min-width: 26px; max-width: 26px; font-weight: 700; }}
 QPushButton#small:checked {{ border: 1px solid {ACCENT}; color: {ACCENT}; background: {RAISED}; }}
-QPushButton#segment {{ border-radius: 0; padding: 5px 0; }}
-QPushButton#segment:checked {{ border: 1px solid {ACCENT}; color: {ACCENT}; }}
+QPushButton#toggle {{ text-align: left; padding: 4px 9px; }}
+QPushButton#toggle:checked {{ border: 1px solid {ACCENT}; color: {ACCENT}; }}
 QPushButton#segleft {{ border-top-left-radius: 6px; border-bottom-left-radius: 6px; }}
 QFrame QLabel#grip {{ background: {RAISED}; border-radius: 6px; padding: 4px 10px; color: {TEXT}; }}
 QFrame QLabel#grip:hover {{ background: {RAISED2}; }}
@@ -151,6 +155,7 @@ class Player:
         self.pos = 0
         self.length = 0
         self.peak = 0.0
+        self.volume = 1.0  # master volume for listening only; exports are not affected
         self.stream = None
         self.error: str | None = None
         self._running = False  # a test harness may call _callback without a device
@@ -215,6 +220,8 @@ class Player:
                 written += n
                 pos = (pos + n) % length
             self.pos = pos
+        if self.volume != 1.0:
+            out *= self.volume
         self.peak = max(self.peak * 0.85, float(np.abs(out).max()) if frames else 0.0)
 
     @property
@@ -295,7 +302,9 @@ class Player:
 QUALITY = "best"  # the app always separates in the best quality
 
 
-def separate_command(path: Path, model_id: str | None, result_file: Path, progress_file: Path) -> list[str]:
+def separate_command(
+    path: Path, model_id: str | None, result_file: Path, progress_file: Path, bleed: str = "off"
+) -> list[str]:
     """Command line that runs one separation in its own process.
 
     A crash deep inside torch (native abort) then only ends that process,
@@ -308,20 +317,55 @@ def separate_command(path: Path, model_id: str | None, result_file: Path, progre
     cmd += [str(path), "-q", QUALITY, "--result-file", str(result_file), "--progress-file", str(progress_file)]
     if model_id:
         cmd += ["-m", model_id]
+    if bleed != "off":
+        cmd += ["--bleed", bleed]
     return cmd
 
 
-def _read_progress(path: Path) -> float | None:
+_RUNNING: set = set()  # separation processes started by this window
+
+
+def stop_separations() -> None:
+    """End every separation process still running (window closing)."""
+    for proc in list(_RUNNING):
+        try:
+            proc.kill()
+        except OSError:
+            pass
+    _RUNNING.clear()
+
+
+def clear_stale_work(max_age_hours: float = 1.0) -> int:
+    """Remove work folders a hard-quit app left in the temp folder. Returns how many."""
+    import shutil
+    import tempfile
+    import time
+
+    removed = 0
+    cutoff = time.time() - max_age_hours * 3600
+    for folder in Path(tempfile.gettempdir()).glob("stemn-*"):
+        try:
+            if folder.is_dir() and folder.stat().st_mtime < cutoff:
+                shutil.rmtree(folder, ignore_errors=True)
+                removed += 1
+        except OSError:
+            pass
+    return removed
+
+
+def _read_progress(path: Path) -> tuple[float, str] | None:
+    """(value, status line) from the child's progress file, or None while it is not readable."""
     try:
-        return min(max(float(path.read_text(encoding="utf-8")), 0.0), 1.0)
+        first, _, note = path.read_text(encoding="utf-8").partition("\n")
+        return min(max(float(first), 0.0), 1.0), note.strip()
     except (OSError, ValueError):
         return None
 
 
-def run_separation(path: Path, model_id: str | None, progress=None) -> dict:
+def run_separation(path: Path, model_id: str | None, progress=None, bleed: str = "off") -> dict:
     """Run the separation in a child process. Returns {stem: path} or raises RuntimeError.
 
-    ``progress`` (optional) is called with values from 0 to 1 while it runs.
+    ``progress`` (optional) is called with (value 0..1, status line) while it runs.
     """
     import json
     import subprocess
@@ -336,20 +380,24 @@ def run_separation(path: Path, model_id: str | None, progress=None) -> dict:
         if sys.platform == "win32":
             kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
         with open(stderr_file, "wb") as err:
+            env = dict(os.environ, STEMN_WORK_DIR=tmp)
             proc = subprocess.Popen(
-                separate_command(path, model_id, result_file, progress_file),
+                separate_command(path, model_id, result_file, progress_file, bleed),
+                env=env,
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
                 stderr=err,
                 **kwargs,
             )
+            _RUNNING.add(proc)
             last = None
             while proc.poll() is None:
                 value = _read_progress(progress_file)
                 if progress and value is not None and value != last:
-                    progress(value)
+                    progress(*value)
                     last = value
                 time.sleep(0.15)
+            _RUNNING.discard(proc)
         data = {}
         if result_file.is_file():
             try:
@@ -361,6 +409,11 @@ def run_separation(path: Path, model_id: str | None, progress=None) -> dict:
         raise RuntimeError(data["error"])
     if proc.returncode == 0 and "stems" in data:
         return next(iter(data["stems"].values()), {})
+    if proc.returncode in (-9, 137):
+        raise RuntimeError(
+            "Der Mac hat die Berechnung abgebrochen, vermutlich war der Arbeitsspeicher voll. "
+            "Schließ andere Programme und versuch es noch einmal."
+        )
     tail = stderr.decode("utf-8", "replace").strip().splitlines()[-3:]
     detail = ("\n" + "\n".join(tail)) if tail else ""
     raise RuntimeError(f"Die Trennung ist abgestuerzt (Code {proc.returncode}).{detail}")
@@ -369,20 +422,45 @@ def run_separation(path: Path, model_id: str | None, progress=None) -> dict:
 class SeparateWorker(QObject):
     finished = Signal(dict)
     failed = Signal(str)
-    progress = Signal(float)
+    progress = Signal(float, str)
 
-    def __init__(self, path: Path, model_id: str | None) -> None:
+    def __init__(self, path: Path, model_id: str | None, bleed: str = "off") -> None:
         super().__init__()
-        self.path, self.model_id = path, model_id
+        self.path, self.model_id, self.bleed = path, model_id, bleed
 
     def run(self) -> None:
         try:
-            self.finished.emit(run_separation(self.path, self.model_id, self.progress.emit))
+            self.finished.emit(run_separation(self.path, self.model_id, self.progress.emit, self.bleed))
         except Exception as exc:
             self.failed.emit(str(exc))
 
 
 # --------------------------------------------------------------------------- small widgets
+
+
+def _drag_pixmap(widget: QWidget, paths):
+    from PySide6.QtGui import QPixmap
+
+    label = Path(paths[0]).stem if len(paths) == 1 else f"{len(paths)} Spuren"
+    font = QFont(FONT_FAMILY, 13, QFont.DemiBold)
+    from PySide6.QtGui import QFontMetrics
+
+    tw = QFontMetrics(font).horizontalAdvance(label)
+    dpr = widget.devicePixelRatioF() if widget is not None else 1.0
+    w, h = tw + 28, 30
+    pix = QPixmap(int(w * dpr), int(h * dpr))
+    pix.setDevicePixelRatio(dpr)
+    pix.fill(Qt.transparent)
+    p = QPainter(pix)
+    p.setRenderHint(QPainter.Antialiasing)
+    p.setPen(Qt.NoPen)
+    p.setBrush(QColor(ACCENT))
+    p.drawRoundedRect(QRectF(0, 0, w, h), 8, 8)
+    p.setPen(QColor("#FFFFFF"))
+    p.setFont(font)
+    p.drawText(QRectF(0, 0, w, h), Qt.AlignCenter, label)
+    p.end()
+    return pix
 
 
 def start_file_drag(widget: QWidget, path) -> None:
@@ -391,6 +469,7 @@ def start_file_drag(widget: QWidget, path) -> None:
     mime.setUrls([QUrl.fromLocalFile(str(p)) for p in paths])
     drag = QDrag(widget)
     drag.setMimeData(mime)
+    drag.setPixmap(_drag_pixmap(widget, paths))  # without it macOS shows an empty grey box
     drag.exec(Qt.CopyAction)
 
 
@@ -487,7 +566,7 @@ class Meter(QWidget):
     def __init__(self) -> None:
         super().__init__()
         self.level = 0.0
-        self.setFixedSize(140, 6)
+        self.setFixedSize(90, 6)
         self.setToolTip("Ausgangspegel")
 
     def set_peak(self, peak: float) -> None:
@@ -566,6 +645,41 @@ class StemName(QWidget):
         else:
             p.setPen(QColor(TEXT))
         p.drawText(QRectF(box.right() + 9, 0, self.width() - box.right() - 9, self.height()), Qt.AlignVCenter | Qt.AlignLeft, self.text)
+
+
+class TransportButton(QPushButton):
+    """⏮ / ▶ / ❚❚ drawn as shapes: the font glyphs differ in size and sit off-centre."""
+
+    def __init__(self, kind: str) -> None:
+        super().__init__("▶")
+        self.kind = kind  # "start" or "play"
+        self.setObjectName("transport")
+        self.setFixedWidth(self.sizeHint().width())
+
+    def paintEvent(self, _e):
+        from PySide6.QtGui import QPolygonF
+        from PySide6.QtWidgets import QStyle, QStyleOptionButton, QStylePainter
+
+        sp = QStylePainter(self)
+        opt = QStyleOptionButton()
+        self.initStyleOption(opt)
+        opt.text = ""
+        sp.drawControl(QStyle.CE_PushButton, opt)
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor(TEXT if self.isEnabled() else MUTED))
+        c = QRectF(self.rect()).center()
+        h = 12.0  # every symbol is 12 px high and centred in the button
+        if self.kind == "start":
+            p.drawRect(QRectF(c.x() - 6, c.y() - h / 2, 2, h))
+            p.drawPolygon(QPolygonF([QPointF(c.x() + 6, c.y() - h / 2), QPointF(c.x() + 6, c.y() + h / 2), QPointF(c.x() - 3, c.y())]))
+        elif self.isChecked():  # pause: two bars, same height as the triangle
+            p.drawRoundedRect(QRectF(c.x() - 5, c.y() - h / 2, 3.5, h), 1, 1)
+            p.drawRoundedRect(QRectF(c.x() + 1.5, c.y() - h / 2, 3.5, h), 1, 1)
+        else:  # play: triangle, its visual centre on the button centre
+            p.drawPolygon(QPolygonF([QPointF(c.x() - 4, c.y() - h / 2), QPointF(c.x() - 4, c.y() + h / 2), QPointF(c.x() + 6, c.y())]))
+        p.end()
 
 
 class StemStrip(QFrame):
@@ -652,6 +766,7 @@ class WaveformView(QWidget):
 
     seek = Signal(float)  # 0..1
     dropped = Signal(Path)
+    cancel_requested = Signal()
 
     def __init__(self) -> None:
         super().__init__()
@@ -661,11 +776,13 @@ class WaveformView(QWidget):
         self.envelopes: dict[str, np.ndarray] = {}
         self.draw_order: list[str] = []
         self.active: set[str] = set()
+        self.gains: dict[str, float] = {}  # fader level per stem (linear), scales its waveform
         self.position = 0.0
         self.duration = 0.0
         self.message = "Drum-Loop hierher ziehen\noder oben auf „Öffnen“ klicken"
         self.progress: float | None = None  # set while separating
         self.busy_text = ""
+        self._cancel_rect: QRectF | None = None
         self._hover = False
         self._paths: dict[str, QPainterPath] = {}
         self._paths_size = None
@@ -684,6 +801,7 @@ class WaveformView(QWidget):
         self.envelopes = envs
         self.draw_order = sorted(envs, key=lambda s: energy[s], reverse=True)  # loud ones at the back
         self.active = set(envs)
+        self.gains = {}
         self.message = ""
         self.progress = None
         self._paths_size = None
@@ -720,7 +838,7 @@ class WaveformView(QWidget):
             edges = np.linspace(0, len(env), w + 1).astype(int)
             edges = np.minimum(edges, len(env) - 1)
             cols = np.maximum.reduceat(env, edges[:-1])
-            amp = np.clip(cols, 0, 1) * (mid - 4)
+            amp = np.clip(cols * self.gains.get(stem, 1.0), 0, 1) * (mid - 4)
             xs = np.arange(len(amp), dtype=float)
             path = QPainterPath(QPointF(0, mid))
             for x, y in zip(xs, amp):
@@ -729,11 +847,11 @@ class WaveformView(QWidget):
                 path.lineTo(QPointF(x, mid + y))
             path.closeSubpath()
             self._paths[stem] = path
-        self._paths_size = (w, h)
+        self._paths_size = (w, h, tuple(sorted(self.gains.items())))
 
     # painting
     def _static_key(self):
-        return (self.width(), self.height(), self.devicePixelRatioF(), tuple(self.draw_order), frozenset(self.active), self.duration)
+        return (self.width(), self.height(), self.devicePixelRatioF(), tuple(self.draw_order), frozenset(self.active), self.duration, tuple(sorted(self.gains.items())))
 
     def _render_static(self):
         """Background, grid and all waveforms, drawn once into a pixmap.
@@ -768,7 +886,7 @@ class WaveformView(QWidget):
         p.setPen(QPen(QColor(LINE), 1))
         p.drawLine(QPointF(0, mid), QPointF(r.width(), mid))
         if self.envelopes:
-            if self._paths_size != (r.width(), r.height()):
+            if self._paths_size != (r.width(), r.height(), tuple(sorted(self.gains.items()))):
                 self._build_paths()
             for stem in self.draw_order:
                 color = QColor(STEM_COLORS.get(stem, MUTED))
@@ -811,29 +929,49 @@ class WaveformView(QWidget):
         p.setBrush(QColor(ACCENT))
         p.drawEllipse(QPointF(x, 6), 4, 4)
 
+    def progress_box(self, r=None) -> QRectF:
+        """Small floating card in the bottom right corner, so the loop stays visible."""
+        r = QRectF(r if r is not None else self.rect())
+        w = min(320.0, r.width() - 32.0)
+        return QRectF(r.right() - 16 - w, r.bottom() - 16 - 84, w, 84)
+
     def _paint_progress(self, p: QPainter, r) -> None:
-        dim = QPainterPath()
-        dim.addRoundedRect(QRectF(r), 12, 12)
-        p.fillPath(dim, QColor(20, 20, 20, 150))  # dim the loop underneath
-        w = min(380.0, r.width() - 80.0)
-        box = QRectF(r.center().x() - w / 2 - 20, r.center().y() - 38, w + 40, 76)
-        p.setPen(Qt.NoPen)
-        p.setBrush(QColor(RAISED))
+        box = self.progress_box(r)
+        w = box.width() - 32
+        p.setPen(QPen(QColor(255, 255, 255, 28), 1))
+        p.setBrush(QColor(35, 34, 33, 215))  # half see-through, the loop shows behind it
         p.drawRoundedRect(box, 10, 10)
+        title, _, detail = self.busy_text.partition(" · ")  # e.g. "Trenne Spuren · noch ca. 1 min"
         p.setPen(QColor(TEXT))
-        p.setFont(QFont(FONT_FAMILY, 15, QFont.DemiBold))
-        p.drawText(QRectF(box.left() + 20, box.top() + 12, w * 0.7, 24), Qt.AlignLeft | Qt.AlignVCenter, self.busy_text)
-        p.setFont(tabular_font(15))
-        p.drawText(QRectF(box.left() + 20, box.top() + 12, w, 24), Qt.AlignRight | Qt.AlignVCenter, f"{round(self.progress * 100)} %")
-        bar = QRectF(box.left() + 20, box.top() + 48, w, 6)
+        p.setFont(QFont(FONT_FAMILY, 13, QFont.DemiBold))
+        p.drawText(QRectF(box.left() + 16, box.top() + 10, w - 80, 22), Qt.AlignLeft | Qt.AlignVCenter, title)
+        p.setFont(tabular_font(13))
+        p.drawText(QRectF(box.left() + 16, box.top() + 10, w - 30, 22), Qt.AlignRight | Qt.AlignVCenter, f"{round(self.progress * 100)} %")
+        # the X that stops the run (asks first)
+        x = QRectF(box.right() - 12 - 22, box.top() + 10, 22, 22)
+        self._cancel_rect = x.adjusted(-6, -6, 6, 6)
+        p.setPen(QPen(QColor(MUTED), 2, Qt.SolidLine, Qt.RoundCap))
+        c = x.center()
+        p.drawLine(QPointF(c.x() - 5, c.y() - 5), QPointF(c.x() + 5, c.y() + 5))
+        p.drawLine(QPointF(c.x() - 5, c.y() + 5), QPointF(c.x() + 5, c.y() - 5))
+        bar = QRectF(box.left() + 16, box.top() + 40, w, 6)
+        p.setPen(Qt.NoPen)
         p.setBrush(QColor(LINE))
         p.drawRoundedRect(bar, 3, 3)
         if self.progress > 0:
             p.setBrush(QColor(ACCENT))
             p.drawRoundedRect(QRectF(bar.left(), bar.top(), max(bar.width() * self.progress, 6), bar.height()), 3, 3)
+        if detail:
+            p.setPen(QColor(MUTED))
+            p.setFont(QFont(FONT_FAMILY, 11))
+            p.drawText(QRectF(box.left() + 16, box.top() + 54, w, 20), Qt.AlignLeft | Qt.AlignVCenter, detail)
 
     # interaction
     def mousePressEvent(self, e):
+        if self.progress is not None:
+            if self._cancel_rect is not None and self._cancel_rect.contains(e.position()):
+                self.cancel_requested.emit()
+            return
         if self.envelopes and self.progress is None:
             self.seek.emit(min(max(e.position().x() / max(self.width(), 1), 0.0), 1.0))
 
@@ -867,46 +1005,6 @@ class WaveformView(QWidget):
             self.dropped.emit(p)
 
 
-class SegmentSwitch(QWidget):
-    """2-4 options side by side; the active one is outlined in orange."""
-
-    def __init__(self, options: list[tuple[str, str]], default: str) -> None:
-        super().__init__()
-        from PySide6.QtWidgets import QButtonGroup
-
-        lay = QHBoxLayout(self)
-        lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(2)
-        self.group = QButtonGroup(self)
-        self.group.setExclusive(True)
-        self._values = {}
-        for i, (label, value) in enumerate(options):
-            b = QPushButton(label)
-            b.setObjectName("segment")
-            b.setCheckable(True)
-            radius = "6px"
-            corners = []
-            if i == 0:
-                corners += [f"border-top-left-radius:{radius}", f"border-bottom-left-radius:{radius}"]
-            if i == len(options) - 1:
-                corners += [f"border-top-right-radius:{radius}", f"border-bottom-right-radius:{radius}"]
-            if corners:
-                b.setStyleSheet("QPushButton#segment {" + ";".join(corners) + "}")
-            self.group.addButton(b, i)
-            self._values[i] = value
-            lay.addWidget(b, 1)
-            if value == default:
-                b.setChecked(True)
-
-    def currentData(self) -> str:
-        return self._values.get(self.group.checkedId(), next(iter(self._values.values())))
-
-    def setCurrentData(self, value: str) -> None:
-        for i, v in self._values.items():
-            if v == value:
-                self.group.button(i).setChecked(True)
-
-
 # --------------------------------------------------------------------------- window
 
 
@@ -914,7 +1012,7 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle(f"stemn {__version__}")
-        self.resize(1120, 560)
+        self.resize(1300, 560)
         self.setMinimumSize(860, 420)
         self.player = Player()
         self.rows: list[StemStrip] = []
@@ -932,7 +1030,8 @@ class MainWindow(QMainWindow):
         outer = QVBoxLayout(root)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
-        outer.addWidget(self._build_topbar())
+        topbar = self._build_topbar()
+        outer.addWidget(topbar)
 
         body = QHBoxLayout()
         body.setContentsMargins(12, 6, 12, 12)
@@ -948,6 +1047,12 @@ class MainWindow(QMainWindow):
         self.status.setObjectName("muted")
         self.status.setWordWrap(True)
         wave_box.addWidget(self.status)
+        self.wave.cancel_requested.connect(self.cancel_separation)
+        from PySide6.QtGui import QKeySequence, QShortcut
+
+        esc = QShortcut(QKeySequence(Qt.Key_Escape), self)
+        esc.setContext(Qt.WindowShortcut)
+        esc.activated.connect(self.cancel_separation)
         body.addLayout(wave_box, 1)
         body.addWidget(self._build_panel())
         outer.addLayout(body, 1)
@@ -957,6 +1062,8 @@ class MainWindow(QMainWindow):
         self.timer.timeout.connect(self.tick)
         self.timer.start()
         self._set_loaded(False)
+        # the top bar never gets squeezed: buttons would overlap
+        self.setMinimumWidth(max(self.minimumWidth(), topbar.sizeHint().width()))
         self._no_focus()
 
         if self.model_box.count() == 0:
@@ -979,12 +1086,10 @@ class MainWindow(QMainWindow):
         self.time.setFixedWidth(120)
         lay.addWidget(self.time)
 
-        self.to_start_btn = QPushButton("⏮")
-        self.to_start_btn.setObjectName("transport")
+        self.to_start_btn = TransportButton("start")
         self.to_start_btn.setToolTip("Zum Anfang")
         self.to_start_btn.clicked.connect(self._to_start)
-        self.play_btn = QPushButton("▶")
-        self.play_btn.setObjectName("transport")
+        self.play_btn = TransportButton("play")
         self.play_btn.setCheckable(True)
         self.play_btn.setToolTip("Abspielen / Pause · Leertaste")
         from PySide6.QtGui import QKeySequence, QShortcut
@@ -998,6 +1103,20 @@ class MainWindow(QMainWindow):
         lay.addSpacing(12)
         self.meter = Meter()
         lay.addWidget(self.meter)
+        lay.addSpacing(14)
+        vol_label = QLabel("VOL")
+        vol_label.setObjectName("section")
+        lay.addWidget(vol_label)
+        lay.addSpacing(4)
+        self.volume = QSlider(Qt.Horizontal)
+        self.volume.setRange(-40, 6)  # dB
+        self.volume.setValue(0)
+        self.volume.setFixedWidth(80)
+        self.volume.setToolTip("Lautstärke der Wiedergabe: 0 dB (Doppelklick: zurück auf 0 dB) · Export bleibt unverändert")
+        self.volume.valueChanged.connect(self.set_volume)
+        self.volume.mouseDoubleClickEvent = lambda _e: self.volume.setValue(0)
+        lay.addWidget(self.volume)
+        lay.addSpacing(24)  # the buttons never touch the volume slider
         lay.addStretch(1)
 
         self.import_btn = QPushButton("Öffnen")
@@ -1019,22 +1138,58 @@ class MainWindow(QMainWindow):
         self.separate_btn.setToolTip("Loop in Kick, Snare, Hi-Hat, Toms, Ride und Crash zerlegen · ⌘T")
         self.separate_btn.setShortcut("Ctrl+T")
         self.separate_btn.clicked.connect(self.separate_current)
-        self.export_btn = QPushButton("EXPORTIEREN")
+        self.export_btn = QPushButton(" EXPORTIEREN")
         self.export_btn.setObjectName("primary")
+        self.export_btn.setIconSize(QSize(14, 14))
         self.export_btn.setToolTip("Hörbaren Mix mit den eingestellten Pegeln als WAV speichern · ⌘E")
         self.export_btn.setShortcut("Ctrl+E")
         self.export_btn.clicked.connect(self.export_dialog)
         self.gear_btn = GearButton()
         self.gear_btn.clicked.connect(self.open_settings)
-        for w in (self.import_btn, self.folder_btn, self.mix_grip, self.single_grip, self.separate_btn, self.export_btn):
-            lay.addWidget(w)
+        # groups: loop (Öffnen, Ordner) | TRENNEN | export (Mix, Einzeln, EXPORTIEREN) | gear
+        for group in ((self.import_btn, self.folder_btn), (self.separate_btn,), (self.mix_grip, self.single_grip, self.export_btn)):
+            if group[0] is not self.import_btn:
+                lay.addSpacing(8)
+                lay.addWidget(_divider())
+                lay.addSpacing(8)
+            for w in group:
+                lay.addWidget(w)
         lay.addSpacing(6)
         lay.addWidget(self.gear_btn)
-        # TRENNEN and EXPORTIEREN share one place: only one orange main action at a time
-        width = max(self.separate_btn.sizeHint().width(), self.export_btn.sizeHint().width())
-        self.separate_btn.setFixedWidth(width)
-        self.export_btn.setFixedWidth(width)
+        # both always keep their size; only one of them is orange at a time
+        self.separate_btn.setFixedWidth(self.separate_btn.sizeHint().width())
+        self.export_btn.setFixedWidth(self.export_btn.sizeHint().width() + 20)
+        self._separated_with = None  # settings of the stems on screen
+        # nothing in the bar may change size when clicked (▶ and ❚❚ come from different fonts)
+        height = max(b.sizeHint().height() for b in bar.findChildren(QPushButton))
+        for b in bar.findChildren(QPushButton):
+            b.setFixedHeight(height)
+        bar.setFixedHeight(bar.sizeHint().height())
         return bar
+
+    def set_volume(self, db: int) -> None:
+        self.player.volume = 0.0 if db <= -40 else float(10 ** (db / 20))
+        self.volume.setToolTip(f"Lautstärke der Wiedergabe: {db:+d} dB (Doppelklick: zurück auf 0 dB) · Export bleibt unverändert")
+
+    def _separation_key(self):
+        return (self.source, self.model_box.currentData())
+
+    def _bleed_level(self) -> str:
+        return "light"  # always damp cross-talk; the stems still add up to the original
+
+    def _update_main_buttons(self) -> None:
+        """TRENNEN glows when (re)separating is needed, otherwise EXPORTIEREN glows."""
+        if not hasattr(self, "model_box"):
+            return  # panel not built yet
+        loaded = bool(self.stems)
+        needs = self.source is not None and (not loaded or self._separation_key() != self._separated_with)
+        for btn, lit in ((self.separate_btn, needs), (self.export_btn, loaded and not needs)):
+            if btn.property("lit") != lit:
+                btn.setProperty("lit", lit)
+                btn.style().unpolish(btn)
+                btn.style().polish(btn)
+        color = "#141414" if (loaded and not needs) else (TEXT if loaded else MUTED)
+        self.export_btn.setIcon(download_icon(color))
 
     def _build_panel(self) -> QFrame:
         panel = QFrame()
@@ -1058,6 +1213,9 @@ class MainWindow(QMainWindow):
                 self.model_box.addItem(m.name, m.id)
         lay.addWidget(self.model_box)
         lay.addSpacing(8)
+
+        self.model_box.currentIndexChanged.connect(lambda _i: self._update_main_buttons())
+
 
         lay.addWidget(self._caption("SPUREN"))
         self.rows_box = QVBoxLayout()
@@ -1090,9 +1248,8 @@ class MainWindow(QMainWindow):
             w.setEnabled(has_audio)
         for w in (self.export_btn, self.folder_btn, self.mix_grip, self.single_grip):
             w.setEnabled(loaded)
-        self.export_btn.setVisible(loaded)
-        self.separate_btn.setVisible(not loaded)
         self.separate_btn.setEnabled(self.source is not None and self._thread is None)
+        self._update_main_buttons()
 
     # ---- separation
     def choose_file(self) -> None:
@@ -1129,9 +1286,11 @@ class MainWindow(QMainWindow):
         self.status.setText("Trennt in bester Qualität · der Loop lässt sich währenddessen weiter abspielen")
         self.import_btn.setEnabled(False)
         self.separate_btn.setEnabled(False)
+        self._cancelled = False
 
         self._thread = QThread(self)
-        self._worker = SeparateWorker(self.source, self.model_box.currentData())
+        self._pending_key = self._separation_key()
+        self._worker = SeparateWorker(self.source, self.model_box.currentData(), self._bleed_level())
         self._worker.progress.connect(self.on_progress)
         self._worker.moveToThread(self._thread)
         self._thread.started.connect(self._worker.run)
@@ -1147,9 +1306,28 @@ class MainWindow(QMainWindow):
         self.play_btn.setChecked(False)
         self.play_btn.setText("▶")
 
-    def on_progress(self, value: float) -> None:
+    def on_progress(self, value: float, note: str = "") -> None:
         text = "Modell wird geladen" if value < 0.08 else "Trenne Spuren" if value < 0.95 else "Spuren werden gespeichert"
         self.wave.set_progress(value, text)
+
+    def _confirm_cancel(self) -> bool:
+        keep = " Die vorherige Trennung bleibt erhalten." if self.stems else ""
+        box = QMessageBox(self)
+        box.setWindowTitle("stemn")
+        box.setText("Rendern wirklich abbrechen?")
+        box.setInformativeText(f"Der laufende Vorgang wird gestoppt.{keep}")
+        yes = box.addButton("Ja, abbrechen", QMessageBox.DestructiveRole)
+        box.addButton("Weiter rendern", QMessageBox.RejectRole)
+        box.exec()
+        return box.clickedButton() is yes
+
+    def cancel_separation(self) -> None:
+        if self._thread is None or not self._confirm_cancel():
+            return
+        if self._thread is None:
+            return  # finished while the question was open
+        self._cancelled = True
+        stop_separations()
 
     def _cleanup_thread(self) -> None:
         self._thread = None
@@ -1157,6 +1335,15 @@ class MainWindow(QMainWindow):
         self.separate_btn.setEnabled(self.source is not None)
 
     def on_failed(self, msg: str) -> None:
+        if getattr(self, "_closing", False):
+            return  # we ended the separation ourselves
+        if getattr(self, "_cancelled", False):
+            self.wave.progress = None
+            self.wave.update()
+            self.status.setText(
+                "Abgebrochen. Die vorherige Trennung ist weiter da." if self.stems else "Abgebrochen. Mit TRENNEN neu starten."
+            )
+            return
         self.wave.progress = None
         self.wave.update()
         self.status.setText(f"Fehler beim Trennen: {msg}")
@@ -1178,6 +1365,7 @@ class MainWindow(QMainWindow):
         self.player.load(self.stems)
         self.player.seek(pos)
         self.wave.set_stems(self.stems)
+        self._separated_with = getattr(self, "_pending_key", None) or self._separation_key()
         self._set_loaded(True)
         folder = next(iter(self.stems.values())).parent
         self.status.setText("Klick auf den Namen: Spur an/aus · S: nur diese Spur · Griff rechts: Spur nach Ableton ziehen")
@@ -1244,6 +1432,8 @@ class MainWindow(QMainWindow):
         gains = self.current_gains()
         self.player.set_gains(gains)
         self.wave.active = {s for s, g in gains.items() if g > 0}
+        # the waveform shows each stem at its fader level (the master VOL does not change it)
+        self.wave.gains = {r.stem: db_to_gain(r.gain_db) for r in self.rows}
         self.wave.update()
 
     def toggle_play(self) -> None:
@@ -1416,6 +1606,8 @@ class MainWindow(QMainWindow):
         QApplication.instance().quit()
 
     def closeEvent(self, e):
+        self._closing = True
+        stop_separations()
         self.timer.stop()
         self.player.close()
         super().closeEvent(e)
@@ -1453,6 +1645,33 @@ class UpdateWorker(QObject):
             self.installed.emit(rel.version, "")
         except Exception as exc:
             self.installed.emit(rel.version, str(exc))
+
+
+def _divider() -> QFrame:
+    """Thin vertical line between button groups in the top bar."""
+    line = QFrame()
+    line.setFixedSize(1, 22)
+    line.setStyleSheet(f"background: {LINE};")
+    return line
+
+
+def download_icon(color: str) -> "QIcon":
+    """Small arrow into a tray, drawn so it matches the text colour of the button."""
+    from PySide6.QtGui import QIcon, QPixmap
+
+    pm = QPixmap(28, 28)
+    pm.fill(Qt.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.Antialiasing)
+    pen = QPen(QColor(color), 3)
+    pen.setCapStyle(Qt.RoundCap)
+    pen.setJoinStyle(Qt.RoundJoin)
+    p.setPen(pen)
+    p.drawLine(14, 3, 14, 17)
+    p.drawPolyline([QPointF(8, 11), QPointF(14, 17), QPointF(20, 11)])
+    p.drawPolyline([QPointF(4, 18), QPointF(4, 24), QPointF(24, 24), QPointF(24, 18)])
+    p.end()
+    return QIcon(pm)
 
 
 class GearButton(QPushButton):
@@ -1561,6 +1780,7 @@ def main(argv: list[str] | None = None) -> int:
         from PySide6.QtGui import QIcon
 
         app.setWindowIcon(QIcon(str(icon)))
+    clear_stale_work()  # leftovers of a hard-quit run
     win = MainWindow()
     win.show()
     QTimer.singleShot(1500, win.startup_update_check)

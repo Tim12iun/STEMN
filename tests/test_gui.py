@@ -178,3 +178,127 @@ def test_gear_shows_dot_when_update_is_waiting(window):
     assert not window.gear_btn.badge
     window.update_changed.disconnect(dlg.refresh)
     dlg.deleteLater()
+
+
+def test_separate_stays_visible_and_glows_only_when_needed(window):
+    assert window.separate_btn.isVisibleTo(window) and window.export_btn.isVisibleTo(window)
+    assert window.separate_btn.property("lit") is False and window.export_btn.property("lit") is True
+    window.model_box.addItem("Modell A", "model-a")
+    window.model_box.addItem("Modell B", "model-b")
+    i = window.model_box.findData("model-a")
+    window.model_box.setCurrentIndex(i)
+    window._separated_with = window._separation_key()  # the stems on screen were made with model A
+    window._update_main_buttons()
+    assert window.separate_btn.property("lit") is False
+    window.model_box.setCurrentIndex(window.model_box.findData("model-b"))  # another model needs a new separation
+    assert window.separate_btn.property("lit") is True and window.export_btn.property("lit") is False
+    window.model_box.setCurrentIndex(i)  # back to what the stems were made with
+    assert window.separate_btn.property("lit") is False
+
+
+def test_master_volume_scales_playback_only(window):
+    import numpy as np
+
+    out = np.zeros((256, 2), np.float32)
+    window.player._callback(out, 256, None, None)
+    loud = np.abs(out).max()
+    window.volume.setValue(-20)
+    window.player._callback(out, 256, None, None)
+    assert np.abs(out).max() == pytest.approx(loud * 0.1, rel=1e-3)
+    assert all(g == 1.0 for g in window.player.gains.values())  # export levels untouched
+    window.volume.setValue(-40)
+    window.player._callback(out, 256, None, None)
+    assert not out.any()
+
+
+def test_nothing_moves_when_clicking(window, app):
+    """loomn: no click changes the size or place of anything on screen."""
+    from PySide6.QtWidgets import QWidget
+
+    window.resize(1300, 640)
+    window.show()
+    app.processEvents()
+
+    def snapshot():
+        app.processEvents()
+        return {id(w): (w.objectName(), w.geometry().getRect()) for w in window.findChildren(QWidget) if w.isVisible()}
+
+    before = snapshot()
+    actions = [
+        lambda: (window.play_btn.setChecked(True), window.play_btn.setText("❚❚")),
+        lambda: (window.play_btn.setChecked(False), window.play_btn.setText("▶")),
+        lambda: window.toggle_solo("kick"),
+        lambda: window.toggle_solo("kick"),
+        lambda: window.toggle_stem("snare"),
+    ]
+    for act in actions:
+        act()
+        after = snapshot()
+        moved = [before[k] for k in before if k in after and after[k][1] != before[k][1]]
+        assert not moved, moved
+
+
+def test_cancel_asks_first_and_keeps_the_previous_stems(window, monkeypatch):
+    stems_before = dict(window.stems)
+    stopped = []
+    monkeypatch.setattr(gui, "stop_separations", lambda: stopped.append(True))
+    window._thread = object()  # a run is going
+    monkeypatch.setattr(window, "_confirm_cancel", lambda: False)
+    window.cancel_separation()
+    assert not stopped  # said "keep rendering"
+    monkeypatch.setattr(window, "_confirm_cancel", lambda: True)
+    window.cancel_separation()
+    assert stopped
+    window.on_failed("killed")
+    window._thread = None
+    assert window.stems == stems_before and "vorherige Trennung" in window.status.text()
+
+
+def test_x_in_progress_box_requests_cancel(window, app):
+    from PySide6.QtCore import QPoint, Qt
+    from PySide6.QtTest import QTest
+
+    asked = []
+    window.wave.cancel_requested.connect(lambda: asked.append(True))
+    window.resize(1300, 560)
+    window.show()
+    window.wave.set_progress(0.4, "Trenne Spuren")
+    window.wave.repaint()
+    app.processEvents()
+    r = window.wave._cancel_rect
+    QTest.mouseClick(window.wave, Qt.LeftButton, pos=QPoint(int(r.center().x()), int(r.center().y())))
+    assert asked
+
+
+def test_stale_work_folders_are_cleared(tmp_path, monkeypatch):
+    import os
+    import tempfile
+    import time
+
+    monkeypatch.setattr(tempfile, "gettempdir", lambda: str(tmp_path))
+    old = tmp_path / "stemn-old"
+    old.mkdir()
+    (old / "stem_kick.wav").write_bytes(b"x" * 10)
+    past = time.time() - 3 * 3600
+    os.utime(old, (past, past))
+    fresh = tmp_path / "stemn-fresh"
+    fresh.mkdir()
+    assert gui.clear_stale_work() == 1
+    assert not old.exists() and fresh.exists()
+
+
+def test_waveform_follows_stem_faders_not_master_volume(window):
+    row = window.rows[0]
+    row.fader.setValue(-60)  # -6 dB
+    window.update_gains()
+    assert window.wave.gains[row.stem] == pytest.approx(10 ** (-6 / 20), rel=1e-3)
+    before = dict(window.wave.gains)
+    window.volume.setValue(-20)
+    assert window.wave.gains == before
+
+
+def test_play_and_pause_symbols_keep_the_button_size(window):
+    w = window.play_btn.width()
+    window.play_btn.setChecked(True)
+    window.play_btn.setText("❚❚")
+    assert window.play_btn.width() == w

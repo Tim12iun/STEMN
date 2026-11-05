@@ -105,14 +105,31 @@ class _DropAuthOnRedirect(urllib.request.HTTPRedirectHandler):
         return new
 
 
-_opener = urllib.request.build_opener(_DropAuthOnRedirect)
+def _ssl_context():
+    """The bundled app has no system certificate path, so use certifi's list when it is there."""
+    import ssl
+
+    try:
+        import certifi
+
+        return ssl.create_default_context(cafile=os.environ.get("SSL_CERT_FILE") or certifi.where())
+    except Exception:  # pragma: no cover - certifi missing: fall back to the system store
+        return ssl.create_default_context()
+
+
+_opener = urllib.request.build_opener(_DropAuthOnRedirect, urllib.request.HTTPSHandler(context=_ssl_context()))
 
 
 def _request(url: str, accept: str = "application/vnd.github+json"):
     headers = {"Accept": accept, "User-Agent": f"stemn/{__version__}"}
     token = get_token()
     if token:
-        headers["Authorization"] = f"Bearer {token}"
+        try:
+            return _opener.open(urllib.request.Request(url, headers={**headers, "Authorization": f"Bearer {token}"}), timeout=60)
+        except urllib.error.HTTPError as exc:
+            if exc.code not in (401, 403):
+                raise
+            # an old or revoked token: the repository is public, so try without one
     return _opener.open(urllib.request.Request(url, headers=headers), timeout=60)
 
 
@@ -128,8 +145,8 @@ def latest_release() -> Release | None:
     except urllib.error.HTTPError as exc:
         if exc.code in (401, 403, 404):
             raise UpdateError(
-                "Kein Zugriff auf die Updates. Fehlt der GitHub-Token? "
-                "Mit 'stemn update --token <TOKEN>' eintragen."
+                f"Kein Zugriff auf die Updates (GitHub antwortet mit {exc.code}). "
+                "Bitte später noch einmal versuchen."
             ) from exc
         raise UpdateError(f"GitHub antwortet mit {exc.code}") from exc
     except OSError as exc:
@@ -189,7 +206,8 @@ def _download(url: str, target: Path, progress=None) -> None:
 
 
 def _manifests(models_dir: Path) -> dict[str, str]:
-    return {p.parent.name: p.read_text(encoding="utf-8") for p in models_dir.glob("*/stemn-model.yaml")}
+    found = sorted(models_dir.glob("*/stemn-model.yaml"))
+    return {f"{p.parent.name}/{p.name}": p.read_text(encoding="utf-8") for p in found}
 
 
 def _models_dir(root: Path) -> Path | None:

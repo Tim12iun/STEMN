@@ -12,7 +12,7 @@ class FakeEngine:
     def __init__(self):
         self.calls = []
 
-    def separate(self, input_path, stems=None, model_id=None, output_dir=None, quality="normal"):
+    def separate(self, input_path, stems=None, model_id=None, output_dir=None, quality="normal", bleed="off"):
         self.calls.append((input_path, stems, model_id, output_dir))
         if not Path(input_path).exists():
             raise FileNotFoundError(input_path)

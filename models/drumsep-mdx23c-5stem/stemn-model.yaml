@@ -1,0 +1,14 @@
+id: drumsep-mdx23c-5stem
+name: MDX23C DrumSep 5-Stem 2025 (jarredou)
+arch: mdxc
+checkpoint: drumsep_5stems_mdx23c_jarredou.ckpt
+config: config_mdx23c_drumsep2025.yaml
+# Kick, Snare, Toms, Hi-Hat und Becken (Ride + Crash zusammen). Sauberer als das
+# 6-Stem-Modell: Kick +2,1 dB, Snare +1,7 dB, Toms +1,7 dB SDR (Messung ZFTurbo).
+# Das Original-Repo von jarredou gibt es nicht mehr; die Datei kommt von einem
+# Hugging-Face-Spiegel. Die Pruefsumme stimmt dort auch fuer unser 6-Stem-Modell.
+# Die Config liegt im Repo (aus demselben Spiegel uebernommen).
+downloads:
+  - file: drumsep_5stems_mdx23c_jarredou.ckpt
+    url: https://huggingface.co/dshdaaf/separation-models/resolve/main/DRUMSEP/DRUMSEP-MDX23C_DrumSep_5stem_new_by_jarredou/drumsep_5stems_mdx23c_jarredou.ckpt
+    sha256: 1f8e636fb674b88a52c8399fde9a4ebe2b72b065ca07eed4e03ab1c9f0bfb2e0

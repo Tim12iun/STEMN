@@ -13,6 +13,7 @@ dependencies = [
     "soundfile>=0.12",
     "numpy>=1.24",
     "pyyaml>=6",
+    "certifi",                  # Zertifikate fuer die Update-Pruefung in der fertigen App
     "audioread>=3",
     "PySide6-Essentials>=6.6",  # Oberflaeche
     "sounddevice>=0.4",         # Wiedergabe (bringt PortAudio auf Mac/Windows mit)  # audio-separator importiert es, librosa 1.x bringt es nicht mehr mit

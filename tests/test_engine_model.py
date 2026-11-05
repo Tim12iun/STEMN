@@ -42,3 +42,31 @@ def test_separate_kick_matches_input_length(tmp_path):
     for path in out.values():
         info = sf.info(str(path))
         assert (info.frames, info.samplerate, info.channels) == (len(audio), sr, 2)
+
+
+five = discover_models().get("drumsep-mdx23c-5stem")
+
+
+@pytest.mark.skipif(five is None or not five.is_available(), reason="5-Stem-Modell fehlt")
+def test_five_stem_model_writes_cymbals(tmp_path):
+    from stemn.engine import separate
+
+    audio, sr = _drum_loop()
+    loop = tmp_path / "loop.wav"
+    sf.write(loop, audio, sr)
+    out = separate(loop, model_id="drumsep-mdx23c-5stem", output_dir=tmp_path / "out")
+    assert set(out) == {"kick", "snare", "toms", "hihat", "cymbals"}
+    for path in out.values():
+        assert sf.info(str(path)).frames == len(audio)
+
+
+def test_bleed_keeps_length(tmp_path):
+    from stemn.engine import separate
+
+    audio, sr = _drum_loop()
+    loop = tmp_path / "loop.wav"
+    sf.write(loop, audio, sr)
+    out = separate(loop, stems=["kick", "cymbals"], output_dir=tmp_path / "out", bleed="strong")
+    assert set(out) == {"kick", "cymbals"}
+    for path in out.values():
+        assert sf.info(str(path)).frames == len(audio)

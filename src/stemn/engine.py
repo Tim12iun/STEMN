@@ -7,9 +7,11 @@ so a stem can be dropped onto the same position in a DAW and stays on the grid.
 from __future__ import annotations
 
 import logging
+import os
 import re
 import tempfile
 import threading
+import time
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -107,15 +109,23 @@ class Engine:
         output_dir: str | Path | None = None,
         quality: str = "best",
         progress=None,
+        bleed: str = "off",
+        status=None,
     ) -> dict[str, Path]:
         """Separate ``input_path``; return ``{canonical_stem: wav_path}``.
 
         ``stems`` limits the files written (e.g. ``["kick"]``); ``None`` writes all.
         ``progress`` is called with values from 0 to 1.
+        ``bleed`` ("off", "light", "strong") damps cross-talk between the stems first.
+        ``status`` (optional) gets short German lines on what is happening, e.g. time left.
         """
         report = progress or (lambda _v: None)
         report(0.0)
         overlap = self._overlap(quality)
+        from .bleed import BLEED_POWER
+
+        if bleed not in BLEED_POWER:
+            raise ValueError(f"Uebersprechen '{bleed}' unbekannt ({', '.join(BLEED_POWER)})")
         input_path = Path(input_path).expanduser().resolve()
         if not input_path.is_file():
             raise FileNotFoundError(f"Datei nicht gefunden: {input_path}")
@@ -132,16 +142,21 @@ class Engine:
         reference = sf.info(str(input_path))
         base = _safe_name(input_path.stem)
 
-        with self._lock, tempfile.TemporaryDirectory(prefix="stemn-") as tmp:
+        # the app hands its own folder in, so a stopped run leaves nothing behind
+        work_root = os.environ.get("STEMN_WORK_DIR") or None
+        with self._lock, tempfile.TemporaryDirectory(prefix="stemn-", dir=work_root) as tmp:
             work = Path(tmp)
             separator = self._load(spec, work, overlap)
             report(0.08)
             names = {raw: f"stem_{canonical_stem(raw)}" for raw in spec.stems}
-            with _track_chunks(report, 0.08, 0.95):
+            split_end = 0.95
+            with _track_chunks(report, 0.08, split_end):
                 separator.separate(str(input_path), custom_output_names=names)
-            report(0.95)
+            report(split_end)
 
             raw_files = {canonical_stem(p.stem.removeprefix("stem_")): p for p in work.glob("stem_*")}
+            # always: the stems add up to exactly the original loop (nothing the separation lost goes missing)
+            raw_files = _reduce_bleed_files(raw_files, bleed, input_path)
             result: dict[str, Path] = {}
             for stem, path in raw_files.items():
                 if wanted is None or stem in wanted:
@@ -164,6 +179,31 @@ class Engine:
 
         report(1.0)
         return result
+
+
+def _reduce_bleed_files(raw_files: dict[str, Path], level: str, original: Path | None = None) -> dict[str, Path]:
+    from .bleed import reduce_bleed
+
+    audio, rate = {}, None
+    for stem, path in raw_files.items():
+        audio[stem], rate = sf.read(str(path), dtype="float32", always_2d=True)
+    mix = None
+    if original is not None:
+        try:
+            mix, sr = sf.read(str(original), dtype="float32", always_2d=True)
+            if sr != rate:
+                import librosa
+
+                mix = librosa.resample(mix.T, orig_sr=sr, target_sr=rate).T
+        except Exception:
+            mix = None  # unreadable by soundfile (e.g. mp3): skip, the stems stay as separated
+    cleaned = reduce_bleed(audio, level, mix=mix)
+    out = {}
+    for stem, path in raw_files.items():
+        target = path.with_name(path.stem + "_clean.wav")
+        sf.write(str(target), cleaned[stem], rate, subtype="FLOAT")
+        out[stem] = target
+    return out
 
 
 @contextmanager
@@ -206,7 +246,9 @@ def default_engine() -> Engine:
     return _default_engine
 
 
-def separate(input_path, stems=None, model_id=None, output_dir=None, quality="best", progress=None) -> dict[str, Path]:
+def separate(
+    input_path, stems=None, model_id=None, output_dir=None, quality="best", progress=None, bleed="off", status=None
+) -> dict[str, Path]:
     return default_engine().separate(
-        input_path, stems=stems, model_id=model_id, output_dir=output_dir, quality=quality, progress=progress
+        input_path, stems=stems, model_id=model_id, output_dir=output_dir, quality=quality, progress=progress, bleed=bleed, status=status
     )

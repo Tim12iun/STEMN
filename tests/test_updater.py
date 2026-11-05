@@ -124,3 +124,26 @@ def test_windows_is_not_offered_a_mac_only_release():
     ]
     assert updater.pick_release(releases, "windows-x64").version == "v0.3.6"
     assert updater.pick_release(releases, "macos-arm64").version == "v0.4.0"
+
+
+def test_bad_token_falls_back_to_anonymous(monkeypatch):
+    """The repository is public: an old or revoked token must not block updates."""
+    import io
+    import urllib.error
+
+    from stemn import updater
+
+    seen = []
+
+    class Opener:
+        def open(self, req, timeout=60):
+            auth = req.get_header("Authorization")
+            seen.append(auth)
+            if auth:
+                raise urllib.error.HTTPError(req.full_url, 401, "Bad credentials", {}, io.BytesIO(b""))
+            return io.BytesIO(b"[]")
+
+    monkeypatch.setattr(updater, "_opener", Opener())
+    monkeypatch.setattr(updater, "get_token", lambda: "revoked")
+    assert updater.latest_release() is None
+    assert seen == ["Bearer revoked", None]

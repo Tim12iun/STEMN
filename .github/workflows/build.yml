@@ -1,6 +1,8 @@
 name: Build
 
-# Baut fertige Pakete fuer Mac (Apple Silicon) und Windows, inkl. Modell.
+# Baut fertige Pakete fuer Mac (Apple Silicon) und, nur auf Wunsch, Windows, inkl. Modell.
+# Mac zuerst: Windows wird erst gebaut, wenn der Mac-Stand passt (Haken "windows"
+# beim manuellen Start oder ein Tag v*).
 # Manuell starten (optional mit Versionsnummer -> Release) oder per Tag v*.
 on:
   workflow_dispatch:
@@ -9,6 +11,10 @@ on:
         description: "Versionsnummer fuer ein Release, z.B. 0.2.0 (leer = nur bauen)"
         required: false
         default: ""
+      windows:
+        description: "Auch die Windows-Version bauen"
+        type: boolean
+        default: false
   push:
     tags: ["v*"]
 
@@ -17,11 +23,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - os: macos-14
-            name: stemn-macos-arm64
-          - os: windows-latest
-            name: stemn-windows-x64
+        include: ${{ fromJSON((inputs.windows || startsWith(github.ref, 'refs/tags/v')) && '[{"os":"macos-15","name":"stemn-macos-arm64"},{"os":"windows-latest","name":"stemn-windows-x64"}]' || '[{"os":"macos-15","name":"stemn-macos-arm64"}]') }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -33,7 +35,7 @@ jobs:
       - uses: actions/cache@v4
         with:
           path: models/**/*.ckpt
-          key: models-${{ hashFiles('models/*/stemn-model.yaml') }}
+          key: models-${{ hashFiles('models/*/stemn-*.yaml') }}
       - run: python scripts/fetch_models.py
       - name: Update-Token einbauen (nur Lesezugriff auf dieses Repo)
         shell: bash
@@ -70,6 +72,7 @@ jobs:
           --collect-all audio_separator
           --hidden-import stemn._build_token
           --collect-data librosa
+          --collect-data certifi
           --copy-metadata audio-separator
           --add-data "models${{ runner.os == 'Windows' && ';' || ':' }}models"
           --add-data "src/stemn/fonts${{ runner.os == 'Windows' && ';' || ':' }}stemn/fonts"
@@ -93,6 +96,14 @@ jobs:
           python -c "import numpy as np, soundfile as sf; sf.write('smoke.wav', np.zeros((44100,2),'float32'), 44100)"
           "$EXE" separate smoke.wav -s kick -o smoke-out --result-file smoke.json
           ls smoke-out | grep -q "kick"
+          # real sound through the 5-stem model: all stems together must give back the loop
+          python -c "import numpy as np, soundfile as sf; sf.write('noise.wav', (np.random.default_rng(0).standard_normal((4*44100,2))*0.1).astype('float32'), 44100)"
+          time "$EXE" separate noise.wav -m drumsep-mdx23c-5stem -o smoke-5
+          python -c "import glob, numpy as np, soundfile as sf; o=sf.read('noise.wav')[0]; s=sum(sf.read(f)[0] for f in glob.glob('smoke-5/*.wav')); d=20*np.log10(np.abs(o-s).max()+1e-12); print('Summe minus Original, Spitze:', round(d,1), 'dB'); assert d < -60"
+          # update check must reach GitHub (certificates bundled)
+          out=$("$EXE" update --check 2>&1) || true
+          echo "$out"
+          if echo "$out" | grep -qi "certificate"; then exit 1; fi
           grep -q '"stems"' smoke.json
       - name: Packen
         shell: bash
@@ -106,10 +117,15 @@ jobs:
             ditto -c -k --keepParent stemn.app ../${{ matrix.name }}.zip
             zip -qry ../${{ matrix.name }}-app.zip stemn.app -x '*.ckpt' '*.th'
           fi
-      - uses: actions/upload-artifact@v4
+      # one plain .zip per download (no zip inside a zip); the .zip keeps the app's permissions
+      - uses: actions/upload-artifact@v7
         with:
-          name: ${{ matrix.name }}
-          path: ${{ matrix.name }}*.zip
+          path: ${{ matrix.name }}.zip
+          archive: false
+      - uses: actions/upload-artifact@v7
+        with:
+          path: ${{ matrix.name }}-app.zip
+          archive: false
 
   release:
     if: startsWith(github.ref, 'refs/tags/v') || inputs.version != ''
@@ -118,9 +134,15 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      # the packages were uploaded as plain .zip files: keep them as they are, do not unpack
+      - uses: actions/download-artifact@v8
         with:
           merge-multiple: true
+          skip-decompress: true
+      - name: Pakete pruefen
+        run: |
+          ls -la
+          ls *.zip >/dev/null
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ inputs.version != '' && format('v{0}', inputs.version) || github.ref_name }}

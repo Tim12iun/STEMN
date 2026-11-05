@@ -16,9 +16,13 @@ def _cmd_separate(args) -> int:
 
     stems = [s for s in args.stems.split(",") if s] if args.stems else None
     results = {}
-    progress = _progress_writer(args.progress_file) if args.progress_file else None
+    progress = status = None
+    if args.progress_file:
+        progress, status = _progress_writer(args.progress_file)
+    if args.progress_file:
+        _exit_with_parent()  # started by the app window: never keep working after it is gone
     for path in args.input:
-        out = separate(path, stems=stems, model_id=args.model, output_dir=args.output, quality=args.quality, progress=progress)
+        out = separate(path, stems=stems, model_id=args.model, output_dir=args.output, quality=args.quality, progress=progress, bleed=args.bleed, status=status)
         results[str(path)] = {k: str(v) for k, v in out.items()}
         if not args.json:
             print(f"{path}:")
@@ -31,16 +35,42 @@ def _cmd_separate(args) -> int:
     return 0
 
 
-def _progress_writer(path: str):
-    target = Path(path)
+def _exit_with_parent() -> None:
+    import os
+    import threading
+    import time
 
-    def write(value: float) -> None:
+    parent = os.getppid()
+
+    def watch() -> None:
+        while True:
+            time.sleep(1.0)
+            if os.getppid() != parent:
+                os._exit(3)
+
+    threading.Thread(target=watch, daemon=True).start()
+
+
+def _progress_writer(path: str):
+    """Two callbacks writing ``value`` and a status line into ``path`` (first and second line)."""
+    target = Path(path)
+    state = {"value": 0.0, "note": ""}
+
+    def flush() -> None:
         try:
-            target.write_text(f"{value:.3f}", encoding="utf-8")
+            target.write_text(f"{state['value']:.4f}\n{state['note']}", encoding="utf-8")
         except OSError:
             pass
 
-    return write
+    def progress(value: float) -> None:
+        state["value"] = value
+        flush()
+
+    def status(note: str) -> None:
+        state["note"] = note.replace("\n", " ")
+        flush()
+
+    return progress, status
 
 
 def _write_result(path: str, data: dict) -> None:
@@ -106,6 +136,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("-m", "--model", help="Modell-ID (siehe 'stemn models list')")
     s.add_argument("-o", "--output", help="Zielordner (Standard: '<Datei> stems' daneben)")
     s.add_argument("-q", "--quality", default="best", choices=["fast", "normal", "best"], help="Tempo/Qualitaet (Standard: best)")
+    s.add_argument("-b", "--bleed", default="off", choices=["off", "light", "strong"], help="Uebersprechen zwischen den Spuren daempfen (Standard: off)")
     s.add_argument("--json", action="store_true", help="Ergebnis als JSON ausgeben")
     s.add_argument("--result-file", help=argparse.SUPPRESS)  # used by the app window
     s.add_argument("--progress-file", help=argparse.SUPPRESS)  # used by the app window

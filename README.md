@@ -49,9 +49,15 @@ Neue Version veroeffentlichen: auf GitHub unter *Actions → Build → Run workf
 Versionsnummer eintragen (z.B. `0.2.0`) oder einen Tag `v0.2.0` pushen. Der Build erstellt dann das
 Release mit den Paketen, und alle installierten stemn holen es sich beim naechsten Start.
 
-Weil das Repo privat ist, braucht stemn einen GitHub-Token mit **nur Lesezugriff auf dieses Repo**.
-Er wird beim Build aus dem Repo-Secret `STEMN_UPDATE_TOKEN` ins Paket eingebaut.
-Alternativ pro Rechner: `stemn update --token <TOKEN>`.
+Das Repo ist oeffentlich, Updates brauchen keinen Token.
+
+## Modelle und Uebersprechen
+
+- **Modell** oben im Fenster: neben dem 6-Stem-Modell gibt es *MDX23C DrumSep 5-Stem 2025 (jarredou)*.
+  Es trennt Kick, Snare und Toms sauberer, liefert Ride und Crash aber als eine Spur *Becken*.
+- Uebersprechen wird immer gedaempft: jede Spur behaelt weniger von den anderen Drums.
+- Alle Spuren zusammen ergeben immer exakt den Original-Loop: was beim Trennen verloren geht
+  (z. B. ein Hi-Hat-Ausklang unter der Kick), bekommt die Spur zurueck, der es an dieser Stelle gehoert.
 
 ## Weitere Modelle hinzufuegen
 
