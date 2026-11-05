@@ -140,13 +140,16 @@ class Engine:
         measured = {"work": 0.0, "audio": 0.0}
         stop = threading.Event()
 
+        device = getattr(getattr(restorer, "device", None), "type", "cpu")
+        where = "Grafikchip" if device == "mps" else "Prozessor"
+
         def eta_text() -> str:
             if self._restore_rate_known:
                 left_audio = seconds * (1.0 - state["done"]) + later_seconds
                 left = left_audio * self._restore_rate
                 when = "noch unter 1 min" if left < 60 else f"noch ca. {round(left / 60)} min"
-                return f"Apollo repariert {label} · {when}"
-            return f"Apollo repariert {label}"
+                return f"Apollo repariert {label} · {when} · auf dem {where}"
+            return f"Apollo repariert {label} · Restzeit wird gemessen · auf dem {where}"
 
         def on_piece(fraction: float) -> None:
             now = time.monotonic()
