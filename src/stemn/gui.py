@@ -647,6 +647,41 @@ class StemName(QWidget):
         p.drawText(QRectF(box.right() + 9, 0, self.width() - box.right() - 9, self.height()), Qt.AlignVCenter | Qt.AlignLeft, self.text)
 
 
+class TransportButton(QPushButton):
+    """⏮ / ▶ / ❚❚ drawn as shapes: the font glyphs differ in size and sit off-centre."""
+
+    def __init__(self, kind: str) -> None:
+        super().__init__("▶")
+        self.kind = kind  # "start" or "play"
+        self.setObjectName("transport")
+        self.setFixedWidth(self.sizeHint().width())
+
+    def paintEvent(self, _e):
+        from PySide6.QtGui import QPolygonF
+        from PySide6.QtWidgets import QStyle, QStyleOptionButton, QStylePainter
+
+        sp = QStylePainter(self)
+        opt = QStyleOptionButton()
+        self.initStyleOption(opt)
+        opt.text = ""
+        sp.drawControl(QStyle.CE_PushButton, opt)
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor(TEXT if self.isEnabled() else MUTED))
+        c = QRectF(self.rect()).center()
+        h = 12.0  # every symbol is 12 px high and centred in the button
+        if self.kind == "start":
+            p.drawRect(QRectF(c.x() - 6, c.y() - h / 2, 2, h))
+            p.drawPolygon(QPolygonF([QPointF(c.x() + 6, c.y() - h / 2), QPointF(c.x() + 6, c.y() + h / 2), QPointF(c.x() - 3, c.y())]))
+        elif self.isChecked():  # pause: two bars, same height as the triangle
+            p.drawRoundedRect(QRectF(c.x() - 5, c.y() - h / 2, 3.5, h), 1, 1)
+            p.drawRoundedRect(QRectF(c.x() + 1.5, c.y() - h / 2, 3.5, h), 1, 1)
+        else:  # play: triangle, its visual centre on the button centre
+            p.drawPolygon(QPolygonF([QPointF(c.x() - 4, c.y() - h / 2), QPointF(c.x() - 4, c.y() + h / 2), QPointF(c.x() + 6, c.y())]))
+        p.end()
+
+
 class StemStrip(QFrame):
     """One stem in the side panel: colour + name (on/off), gain fader, dB, S, drag handle."""
 
@@ -741,6 +776,7 @@ class WaveformView(QWidget):
         self.envelopes: dict[str, np.ndarray] = {}
         self.draw_order: list[str] = []
         self.active: set[str] = set()
+        self.gains: dict[str, float] = {}  # fader level per stem (linear), scales its waveform
         self.position = 0.0
         self.duration = 0.0
         self.message = "Drum-Loop hierher ziehen\noder oben auf „Öffnen“ klicken"
@@ -765,6 +801,7 @@ class WaveformView(QWidget):
         self.envelopes = envs
         self.draw_order = sorted(envs, key=lambda s: energy[s], reverse=True)  # loud ones at the back
         self.active = set(envs)
+        self.gains = {}
         self.message = ""
         self.progress = None
         self._paths_size = None
@@ -801,7 +838,7 @@ class WaveformView(QWidget):
             edges = np.linspace(0, len(env), w + 1).astype(int)
             edges = np.minimum(edges, len(env) - 1)
             cols = np.maximum.reduceat(env, edges[:-1])
-            amp = np.clip(cols, 0, 1) * (mid - 4)
+            amp = np.clip(cols * self.gains.get(stem, 1.0), 0, 1) * (mid - 4)
             xs = np.arange(len(amp), dtype=float)
             path = QPainterPath(QPointF(0, mid))
             for x, y in zip(xs, amp):
@@ -810,11 +847,11 @@ class WaveformView(QWidget):
                 path.lineTo(QPointF(x, mid + y))
             path.closeSubpath()
             self._paths[stem] = path
-        self._paths_size = (w, h)
+        self._paths_size = (w, h, tuple(sorted(self.gains.items())))
 
     # painting
     def _static_key(self):
-        return (self.width(), self.height(), self.devicePixelRatioF(), tuple(self.draw_order), frozenset(self.active), self.duration)
+        return (self.width(), self.height(), self.devicePixelRatioF(), tuple(self.draw_order), frozenset(self.active), self.duration, tuple(sorted(self.gains.items())))
 
     def _render_static(self):
         """Background, grid and all waveforms, drawn once into a pixmap.
@@ -849,7 +886,7 @@ class WaveformView(QWidget):
         p.setPen(QPen(QColor(LINE), 1))
         p.drawLine(QPointF(0, mid), QPointF(r.width(), mid))
         if self.envelopes:
-            if self._paths_size != (r.width(), r.height()):
+            if self._paths_size != (r.width(), r.height(), tuple(sorted(self.gains.items()))):
                 self._build_paths()
             for stem in self.draw_order:
                 color = QColor(STEM_COLORS.get(stem, MUTED))
@@ -1026,7 +1063,7 @@ class MainWindow(QMainWindow):
         self.timer.start()
         self._set_loaded(False)
         # the top bar never gets squeezed: buttons would overlap
-        self.setMinimumWidth(max(self.minimumWidth(), topbar.minimumSizeHint().width()))
+        self.setMinimumWidth(max(self.minimumWidth(), topbar.sizeHint().width()))
         self._no_focus()
 
         if self.model_box.count() == 0:
@@ -1049,12 +1086,10 @@ class MainWindow(QMainWindow):
         self.time.setFixedWidth(120)
         lay.addWidget(self.time)
 
-        self.to_start_btn = QPushButton("⏮")
-        self.to_start_btn.setObjectName("transport")
+        self.to_start_btn = TransportButton("start")
         self.to_start_btn.setToolTip("Zum Anfang")
         self.to_start_btn.clicked.connect(self._to_start)
-        self.play_btn = QPushButton("▶")
-        self.play_btn.setObjectName("transport")
+        self.play_btn = TransportButton("play")
         self.play_btn.setCheckable(True)
         self.play_btn.setToolTip("Abspielen / Pause · Leertaste")
         from PySide6.QtGui import QKeySequence, QShortcut
@@ -1081,6 +1116,7 @@ class MainWindow(QMainWindow):
         self.volume.valueChanged.connect(self.set_volume)
         self.volume.mouseDoubleClickEvent = lambda _e: self.volume.setValue(0)
         lay.addWidget(self.volume)
+        lay.addSpacing(24)  # the buttons never touch the volume slider
         lay.addStretch(1)
 
         self.import_btn = QPushButton("Öffnen")
@@ -1396,6 +1432,8 @@ class MainWindow(QMainWindow):
         gains = self.current_gains()
         self.player.set_gains(gains)
         self.wave.active = {s for s, g in gains.items() if g > 0}
+        # the waveform shows each stem at its fader level (the master VOL does not change it)
+        self.wave.gains = {r.stem: db_to_gain(r.gain_db) for r in self.rows}
         self.wave.update()
 
     def toggle_play(self) -> None:

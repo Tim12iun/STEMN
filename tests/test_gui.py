@@ -285,3 +285,20 @@ def test_stale_work_folders_are_cleared(tmp_path, monkeypatch):
     fresh.mkdir()
     assert gui.clear_stale_work() == 1
     assert not old.exists() and fresh.exists()
+
+
+def test_waveform_follows_stem_faders_not_master_volume(window):
+    row = window.rows[0]
+    row.fader.setValue(-60)  # -6 dB
+    window.update_gains()
+    assert window.wave.gains[row.stem] == pytest.approx(10 ** (-6 / 20), rel=1e-3)
+    before = dict(window.wave.gains)
+    window.volume.setValue(-20)
+    assert window.wave.gains == before
+
+
+def test_play_and_pause_symbols_keep_the_button_size(window):
+    w = window.play_btn.width()
+    window.play_btn.setChecked(True)
+    window.play_btn.setText("❚❚")
+    assert window.play_btn.width() == w
