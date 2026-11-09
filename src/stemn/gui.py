@@ -1131,6 +1131,9 @@ class WaveformView(QWidget):
         title, _, detail = self.busy_text.partition(" · ")  # e.g. "Trenne Spuren · noch ca. 1 min"
         p.setPen(QColor(TEXT))
         p.setFont(QFont(FONT_FAMILY, 13, QFont.DemiBold))
+        from PySide6.QtGui import QFontMetrics
+
+        title = QFontMetrics(p.font()).elidedText(title, Qt.ElideRight, int(w - 80))
         p.drawText(QRectF(box.left() + 16, box.top() + 10, w - 80, 22), Qt.AlignLeft | Qt.AlignVCenter, title)
         p.setFont(tabular_font(13))
         p.drawText(QRectF(box.left() + 16, box.top() + 10, w - 30, 22), Qt.AlignRight | Qt.AlignVCenter, f"{round(self.progress * 100)} %")
@@ -1151,6 +1154,7 @@ class WaveformView(QWidget):
         if detail:
             p.setPen(QColor(MUTED))
             p.setFont(QFont(FONT_FAMILY, 11))
+            detail = QFontMetrics(p.font()).elidedText(detail, Qt.ElideRight, int(w))
             p.drawText(QRectF(box.left() + 16, box.top() + 54, w, 20), Qt.AlignLeft | Qt.AlignVCenter, detail)
 
     # interaction
@@ -1648,8 +1652,8 @@ class MainWindow(QMainWindow):
 
     def on_dereverb_progress(self, value: float, note: str = "") -> None:
         label = getattr(self, "_dereverb_label", "")
-        if note:  # first use: the model is downloaded once
-            text = f"{note} · {label}"
+        if note.startswith("Download: "):  # first use: the model is downloaded once
+            text = f"De-Reverb-Modell laden · einmalig, {note.removeprefix('Download: ')} · {label}"
         elif value < 0.35:
             text = f"Modell wird geladen · {label}"
         else:

@@ -62,3 +62,9 @@ def test_download_uses_bundled_certificates(monkeypatch):
     monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
     assert dereverb.check_download() == 5
     assert seen["context"] is not None  # the packaged app has no system certificates
+
+
+def test_download_note_shows_minutes_left():
+    assert dereverb.download_note(100_000_000, 900_000_000, 1.0) == "100 von 900 MB"  # speed not known yet
+    assert dereverb.download_note(100_000_000, 900_000_000, 60.0) == "100 von 900 MB · noch ca. 8 min"
+    assert dereverb.download_note(880_000_000, 900_000_000, 60.0).endswith("noch unter 1 min")

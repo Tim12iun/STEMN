@@ -78,11 +78,26 @@ def is_installed(folder: Path | None = None) -> bool:
     return spec.checkpoint.is_file() and spec.config.is_file()
 
 
-def ensure_model(progress=None, folder: Path | None = None) -> ModelSpec:
-    """Download the model files once (checks SHA-256). ``progress`` gets 0..1."""
+def download_note(done: int, total: int, seconds: float) -> str:
+    """e.g. "312 von 913 MB · noch ca. 4 min" (time only once the speed is known)."""
+    text = f"{done / 1e6:.0f} von {total / 1e6:.0f} MB"
+    if seconds < 2 or done <= 0:
+        return text
+    left = (total - done) / (done / seconds)
+    if left < 60:
+        return f"{text} · noch unter 1 min"
+    return f"{text} · noch ca. {int(left / 60 + 0.5)} min"
+
+
+def ensure_model(progress=None, folder: Path | None = None, status=None) -> ModelSpec:
+    """Download the model files once (checks SHA-256). ``progress`` gets 0..1,
+    ``status`` a short line with the amount and the time left."""
+    import time
+
     spec = model_spec(folder)
     spec.folder.mkdir(parents=True, exist_ok=True)
     report = progress or (lambda _v: None)
+    note = status or (lambda _t: None)
     for key in ("config", "checkpoint"):
         name, expected = FILES[key]
         target = spec.folder / name
@@ -92,11 +107,16 @@ def ensure_model(progress=None, folder: Path | None = None) -> ModelSpec:
         with _open(_BASE + name) as resp, open(tmp, "wb") as out:
             total = int(resp.headers.get("Content-Length") or 0)
             done = 0
+            start = last = time.monotonic()
             while chunk := resp.read(1 << 20):
                 out.write(chunk)
                 done += len(chunk)
                 if total and key == "checkpoint":
                     report(done / total)
+                    now = time.monotonic()
+                    if now - last >= 1.0:
+                        last = now
+                        note(download_note(done, total, now - start))
         if _sha256(tmp) != expected:
             tmp.unlink(missing_ok=True)
             raise RuntimeError(f"Download von {name} ist beschädigt. Bitte noch einmal versuchen.")
@@ -193,8 +213,8 @@ class DereverbEngine:
         target.parent.mkdir(parents=True, exist_ok=True)
         report(0.0)
         if not is_installed(folder):
-            note("De-Reverb-Modell wird geladen (einmalig, ca. 900 MB)")
-            spec = ensure_model(lambda v: report(0.3 * v), folder)
+            note("Download: 913 MB")
+            spec = ensure_model(lambda v: report(0.3 * v), folder, lambda t: note(f"Download: {t}"))
         else:
             spec = model_spec(folder)
         note("")
