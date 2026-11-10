@@ -3,7 +3,7 @@
 Zerlegt Drum-Loops lokal und offline in **Kick, Snare, Hi-Hat, Toms, Ride und Crash**.
 Die Stems sind sample-genau so lang wie das Original und passen damit direkt aufs Grid in Ableton.
 
-Status: App mit Oberflaeche (Mac und Windows). Das Max-for-Live-Device folgt.
+Status: App mit Oberflaeche (Mac und Windows) und ein erstes Max-for-Live-Device fuer Ableton (Mac, siehe [`m4l/`](m4l/README.md)).
 
 ## Benutzen
 
