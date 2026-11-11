@@ -1,7 +1,7 @@
 """Builds ``stemn.amxd`` (Max Audio Effect) from the scripts in this folder.
 
     python m4l/build_device.py            -> m4l/dist/stemn/
-    python m4l/build_device.py --install  -> also into the Ableton User Library
+    python m4l/build_device.py --install  -> also into LOOMN-MAX4LIVE/stemn
 
 The device is not frozen: the three .js files must lie next to stemn.amxd,
 Max finds them in the device's own folder.
@@ -18,7 +18,8 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 SCRIPTS = ["stemn-ui.js", "stemn-live.js", "stemn-runner.js"]
 WIDTH, HEIGHT = 340, 169
-USER_LIBRARY = Path.home() / "Music/Ableton/User Library/Presets/Audio Effects/Max Audio Effect/stemn"
+INSTALL_DIR = Path.home() / "Documents/MAX for LIVE 3rd Party/LOOMN-MAX4LIVE/stemn"
+DOCS = ["LIESMICH stemn.txt"]
 
 
 def box(id_, maxclass, rect, text=None, inlets=1, outlets=0, outlettype=None, **attrs):
@@ -153,19 +154,19 @@ def amxd_bytes(patch: dict) -> bytes:
 def build(target: Path) -> Path:
     target.mkdir(parents=True, exist_ok=True)
     (target / "stemn.amxd").write_bytes(amxd_bytes(patcher()))
-    for s in SCRIPTS:
+    for s in SCRIPTS + DOCS:
         shutil.copy2(HERE / s, target / s)
     return target
 
 
 def main() -> int:
     p = argparse.ArgumentParser()
-    p.add_argument("--install", action="store_true", help="auch in die Ableton User Library legen")
+    p.add_argument("--install", action="store_true", help="auch in den Ordner LOOMN-MAX4LIVE legen")
     p.add_argument("--out", default=str(HERE / "dist" / "stemn"))
     args = p.parse_args()
     print(build(Path(args.out)))
     if args.install:
-        print(build(USER_LIBRARY))
+        print(build(INSTALL_DIR))
     return 0
 
 

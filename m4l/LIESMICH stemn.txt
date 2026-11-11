@@ -1,0 +1,15 @@
+stemn – Drum-Loops in Kick, Snare, Hi-Hat, Toms, Ride und Crash trennen
+
+Voraussetzung: stemn.app im Programme-Ordner (die App muss nicht geöffnet sein).
+
+1. stemn.amxd auf irgendeine Spur ziehen.
+2. Einen Audio-Clip anklicken oder einen Loop auf das Feld ziehen.
+3. Spuren abwählen, die du nicht brauchst (oranger Rand = wird angelegt).
+4. TRENNEN drücken. Ein Klick während der Trennung bricht ab.
+
+Jede Spur landet als neue Audiospur direkt unter dem Clip, an derselben Stelle,
+mit Warp und Markern vom Original. Der Original-Clip wird stummgeschaltet,
+Cmd+Z nimmt alles zurück. Die Dateien liegen im Ordner "<Loop> stems" neben dem Original.
+
+Updates: Die stemn-App aktualisiert diesen Ordner bei jedem Start selbst.
+Nichts in diesem Ordner von Hand ändern, es wird beim nächsten Update überschrieben.

@@ -6,7 +6,7 @@ genau wie das App-Fenster es tut. Die App muss also im Programme-Ordner liegen.
 
 ## Benutzen
 
-1. Device auf irgendeine Spur ziehen (zu finden unter *Audio Effects → Max Audio Effect → stemn*).
+1. Device auf irgendeine Spur ziehen (Ordner `MAX for LIVE 3rd Party/LOOMN-MAX4LIVE/stemn` in den Dokumenten, neben bpmchanger und prepn).
 2. Einen Audio-Clip anklicken (Session oder Arrangement). Das Device zeigt ihn sofort an.
    Oder eine Datei aus dem Finder oder Browser auf das Feld ziehen.
 3. Oben die Spuren abwählen, die man nicht braucht (oranger Rand = wird angelegt).
@@ -22,17 +22,18 @@ Die Dateien liegen wie bei der App im Ordner `<Loop> stems` neben dem Original
 
 ## Updates
 
-Die App bringt das Device mit. Bei jedem Start legt sie es in die User Library, wenn sich etwas geändert hat.
+Die App bringt das Device mit. Bei jedem Start legt sie es in den eigenen Ordner `LOOMN-MAX4LIVE/stemn`, wenn sich etwas geändert hat
+(gibt es den Ordner `LOOMN-MAX4LIVE` nicht, in die Ableton User Library).
 Ein App-Update aktualisiert also auch das Device (neu laden: Device einmal neu auf die Spur ziehen).
 
 ## Bauen
 
 ```bash
 python m4l/build_device.py             # -> m4l/dist/stemn/
-python m4l/build_device.py --install   # zusätzlich in die User Library
+python m4l/build_device.py --install   # zusätzlich nach LOOMN-MAX4LIVE/stemn
 ```
 
-Das Device ist nicht eingefroren: `stemn.amxd` und die drei Skripte müssen im selben Ordner liegen.
+Das Device ist nicht eingefroren: `stemn.amxd` und die drei Skripte müssen im selben Ordner liegen (dazu kommt `LIESMICH stemn.txt`).
 
 - `stemn-ui.js` (jsui): Oberfläche im loomn-Stil
 - `stemn-live.js` (js): Zustand, Live-API (Clip folgen, Spuren und Clips anlegen)

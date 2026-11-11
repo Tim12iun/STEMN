@@ -28,3 +28,10 @@ def test_no_ableton_or_no_bundle(tmp_path):
     lib.mkdir()
     assert m4l.install_device(lib, tmp_path / "nothing") == []
     assert not m4l.device_dir(lib).exists()
+
+
+def test_own_folder_next_to_loomn_devices(tmp_path, monkeypatch):
+    monkeypatch.setattr(m4l.Path, "home", lambda: tmp_path)
+    assert m4l.device_dir() == tmp_path / "Music/Ableton/User Library/Presets/Audio Effects/Max Audio Effect/stemn"
+    (tmp_path / "Documents/MAX for LIVE 3rd Party/LOOMN-MAX4LIVE").mkdir(parents=True)
+    assert m4l.device_dir() == tmp_path / "Documents/MAX for LIVE 3rd Party/LOOMN-MAX4LIVE/stemn"
