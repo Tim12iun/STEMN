@@ -1551,6 +1551,16 @@ class SettingsDialog(QDialog):
             self.win.check_updates(install=True)
 
 
+def _install_m4l_device() -> None:
+    """Copy the bundled Max for Live device into the Ableton User Library (app update = device update)."""
+    try:
+        from .m4l import install_device
+
+        install_device()
+    except Exception:
+        pass
+
+
 def main(argv: list[str] | None = None) -> int:
     app = QApplication.instance() or QApplication(sys.argv if argv is None else argv)
     app.setApplicationName("stemn")
@@ -1564,6 +1574,7 @@ def main(argv: list[str] | None = None) -> int:
     win = MainWindow()
     win.show()
     QTimer.singleShot(1500, win.startup_update_check)
+    QTimer.singleShot(800, _install_m4l_device)
     if argv and len(argv) > 1 and Path(argv[1]).is_file():
         QTimer.singleShot(0, lambda: win.start(Path(argv[1])))
     return app.exec()

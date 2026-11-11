@@ -20,6 +20,11 @@ Eine hereingezogene Datei landet in der Session im gewählten Scene-Slot, im Arr
 Die Dateien liegen wie bei der App im Ordner `<Loop> stems` neben dem Original
 (bei schreibgeschützten Orten wie der Core Library in `~/Music/stemn`).
 
+## Updates
+
+Die App bringt das Device mit. Bei jedem Start legt sie es in die User Library, wenn sich etwas geändert hat.
+Ein App-Update aktualisiert also auch das Device (neu laden: Device einmal neu auf die Spur ziehen).
+
 ## Bauen
 
 ```bash

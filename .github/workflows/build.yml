@@ -62,6 +62,8 @@ jobs:
           done
           iconutil -c icns "$d" -o src/stemn/assets/stemn.icns
           ls -la src/stemn/assets/stemn.icns
+      - name: Max-for-Live-Device bauen (kommt mit in die App)
+        run: python m4l/build_device.py --out src/stemn/m4l_device
       - name: PyInstaller (App mit Fenster)
         run: >
           pyinstaller --noconfirm --clean --windowed --name stemn
@@ -74,6 +76,7 @@ jobs:
           --add-data "models${{ runner.os == 'Windows' && ';' || ':' }}models"
           --add-data "src/stemn/fonts${{ runner.os == 'Windows' && ';' || ':' }}stemn/fonts"
           --add-data "src/stemn/assets${{ runner.os == 'Windows' && ';' || ':' }}stemn/assets"
+          --add-data "src/stemn/m4l_device${{ runner.os == 'Windows' && ';' || ':' }}stemn/m4l_device"
           scripts/stemn_entry.py
       - name: Mac-App Version eintragen und neu signieren
         if: runner.os == 'macOS'
